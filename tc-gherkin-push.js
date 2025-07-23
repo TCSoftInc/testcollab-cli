@@ -6,11 +6,13 @@
  * A CLI tool that uploads local *.feature files to Test Collab.
  * 
  * Usage:
- *   tc-gherkin-push --project <id> [--dir <path>]
+ *   tc-gherkin-push --project <id> [--dir <path>] [--remove-orphaned]
  * 
  * Options:
- *   --project <id>  Test Collab project ID
- *   --dir <path>    Directory containing feature files (default: "features")
+ *   --project <id>        Test Collab project ID
+ *   --dir <path>          Directory containing feature files (default: "features")
+ *   --remove-orphaned     Remove orphaned test cases/suites not in feature files
+ *   --api-url <url>       Test Collab API base URL (default: "https://api.testcollab.io")
  * 
  * Environment variables:
  *   TESTCOLLAB_TOKEN  API token for Test Collab authentication
@@ -20,8 +22,6 @@ import { Command } from 'commander';
 import { glob } from 'glob';
 import fs from 'fs/promises';
 import path from 'path';
-import pkg from 'testcollab-sdk';
-const { TestCasesApi, Configuration } = pkg;
 
 // Initialize commander
 const program = new Command();
@@ -31,6 +31,8 @@ program
   .description('Upload Gherkin feature files to Test Collab')
   .requiredOption('--project <id>', 'Test Collab project ID')
   .option('--dir <path>', 'Directory containing feature files', 'features')
+  .option('--remove-orphaned', 'Remove orphaned test cases/suites not in feature files', false)
+  .option('--api-url <url>', 'Test Collab API base URL', 'https://api.testcollab.io')
   .version('1.0.0');
 
 // Main execution logic
@@ -43,170 +45,156 @@ program.action(async (options) => {
       process.exit(1);
     }
 
-    // Initialize the Test Collab API client
-    const apiClient = initializeApiClient(token);
+    // Validate directory exists
+    try {
+      await fs.access(options.dir);
+    } catch (error) {
+      console.error(`Error: Directory "${options.dir}" does not exist`);
+      process.exit(1);
+    }
     
-    // Process feature files
-    await processFeatureFiles(options.project, options.dir, apiClient);
+    // Build gherkin tree from feature files
+    console.log(`📁 Scanning directory: ${options.dir}`);
+    const gherkinTree = await buildGherkinTree(options.dir);
+    
+    if (gherkinTree.length === 0) {
+      console.log(`No feature files found in ${options.dir}`);
+      return;
+    }
+    
+    console.log(`📄 Found ${countFeatureFiles(gherkinTree)} feature file(s)`);
+    
+    console.log({options})
+    // Send to Test Collab API
+    await syncWithTestCollab(options.project, gherkinTree, options.removeOrphaned, options.apiUrl, token);
+    
+    console.log('✅ Synchronization completed successfully');
     
   } catch (error) {
-    console.error(`Error: ${error.message}`);
+    console.error(`❌ Error: ${error.message}`);
     process.exit(1);
   }
 });
 
 /**
- * Initialize the TestCollab SDK client
- * @param {string} token - The authentication token
- * @returns {TestCasesApi} The initialized API client
+ * Build a gherkin tree structure from the feature files directory
+ * @param {string} directoryPath - The root directory containing feature files
+ * @returns {Array} Array of GherkinTree nodes
  */
-function initializeApiClient(token) {
+async function buildGherkinTree(directoryPath) {
+  const tree = [];
+  
   try {
-    // Create a configuration with the auth token
-    const config = new Configuration({
-      apiKey: token,
-      basePath: 'https://api.testcollab.io'
-    });
+    // Get all items in the directory
+    const items = await fs.readdir(directoryPath, { withFileTypes: true });
     
-    // Create the TestCasesApi instance
-    return new TestCasesApi(config);
-  } catch (error) {
-    throw new Error(`Failed to initialize API client: ${error.message}`);
-  }
-}
-
-/**
- * Process all feature files in the specified directory
- * @param {string} projectId - The Test Collab project ID
- * @param {string} directoryPath - The directory containing feature files
- * @param {TestCasesApi} apiClient - The initialized API client
- */
-async function processFeatureFiles(projectId, directoryPath, apiClient) {
-  try {
-    // Find all feature files in the directory (recursively)
-    const featurePattern = path.join(directoryPath, '**', '*.feature');
-    const featureFiles = await glob(featurePattern);
-    
-    if (featureFiles.length === 0) {
-      console.log(`No feature files found in ${directoryPath}`);
-      return;
-    }
-    
-    console.log(`Found ${featureFiles.length} feature file(s)`);
-    
-    // Process each feature file
-    for (const filePath of featureFiles) {
-      await processFeatureFile(filePath, projectId, apiClient);
-    }
-    
-    console.log('All feature files processed successfully');
-  } catch (error) {
-    throw new Error(`Failed to process feature files: ${error.message}`);
-  }
-}
-
-/**
- * Process a single feature file
- * @param {string} filePath - Path to the feature file
- * @param {string} projectId - The Test Collab project ID
- * @param {TestCasesApi} apiClient - The initialized API client
- */
-async function processFeatureFile(filePath, projectId, apiClient) {
-  try {
-    // Extract the filename to use as the title
-    const fileName = path.basename(filePath);
-    
-    // Read the feature file content
-    const fileContent = await fs.readFile(filePath, 'utf8');
-    
-    // Check if a test case with this title already exists
-    const existingCase = await findExistingTestCase(projectId, fileName, apiClient);
-    
-    if (existingCase) {
-      // Update the existing test case
-      await updateTestCase(existingCase.id, fileContent, apiClient);
-      console.log(`🔄 Updated: ${fileName}`);
-    } else {
-      // Create a new test case
-      await createTestCase(projectId, fileName, fileContent, apiClient);
-      console.log(`➕ Created: ${fileName}`);
-    }
-  } catch (error) {
-    console.error(`Failed to process ${filePath}: ${error.message}`);
-    // Continue processing other files even if one fails
-  }
-}
-
-/**
- * Find an existing test case by title
- * @param {string} projectId - The Test Collab project ID
- * @param {string} title - The test case title (filename)
- * @param {TestCasesApi} apiClient - The initialized API client
- * @returns {Object|null} The test case if found, null otherwise
- */
-async function findExistingTestCase(projectId, title, apiClient) {
-  try {
-    // Get test cases filtered by title
-    const response = await apiClient.getTestCases({
-      projectId: projectId,
-      q: title
-    });
-    
-    // If the response contains test cases and the first one matches our title
-    if (response && response.length > 0) {
-      // Return the first matching test case
-      // TODO: Implement AST parsing for more granular Gherkin handling
-      return response[0];
-    }
-    
-    return null;
-  } catch (error) {
-    throw new Error(`Failed to search for existing test case: ${error.message}`);
-  }
-}
-
-/**
- * Update an existing test case
- * @param {string} caseId - The test case ID
- * @param {string} content - The feature file content
- * @param {TestCasesApi} apiClient - The initialized API client
- */
-async function updateTestCase(caseId, content, apiClient) {
-  try {
-    await apiClient.updateTestCase({
-      id: caseId,
-      testCasePayload: {
-        body: content,
-        test_type: 'gherkin'
+    for (const item of items) {
+      const itemPath = path.join(directoryPath, item.name);
+      
+      if (item.isDirectory()) {
+        // Recursively process subdirectories
+        const children = await buildGherkinTree(itemPath);
+        
+        // Only include directories that contain feature files (directly or in subdirectories)
+        if (children.length > 0) {
+          tree.push({
+            name: item.name,
+            type: 'directory',
+            children: children
+          });
+        }
+      } else if (item.isFile() && item.name.endsWith('.feature')) {
+        // Read feature file content
+        const content = await fs.readFile(itemPath, 'utf8');
+        const relativePath = path.relative(process.cwd(), itemPath);
+        
+        tree.push({
+          name: item.name,
+          type: 'file',
+          path: relativePath,
+          content: content
+        });
       }
-    });
+    }
+    
+    return tree;
   } catch (error) {
-    throw new Error(`Failed to update test case: ${error.message}`);
+    throw new Error(`Failed to build gherkin tree: ${error.message}`);
   }
 }
 
 /**
- * Create a new test case
- * @param {string} projectId - The Test Collab project ID
- * @param {string} title - The test case title (filename)
- * @param {string} content - The feature file content
- * @param {TestCasesApi} apiClient - The initialized API client
+ * Count the total number of feature files in the tree
+ * @param {Array} tree - The gherkin tree
+ * @returns {number} Total count of feature files
  */
-async function createTestCase(projectId, title, content, apiClient) {
+function countFeatureFiles(tree) {
+  let count = 0;
+  
+  for (const node of tree) {
+    if (node.type === 'file') {
+      count++;
+    } else if (node.type === 'directory' && node.children) {
+      count += countFeatureFiles(node.children);
+    }
+  }
+  
+  return count;
+}
+
+/**
+ * Sync the gherkin tree with Test Collab
+ * @param {string} projectId - The Test Collab project ID
+ * @param {Array} gherkinTree - The gherkin tree structure
+ * @param {boolean} removeOrphaned - Whether to remove orphaned items
+ * @param {string} apiUrl - The API base URL
+ * @param {string} token - The authentication token
+ */
+async function syncWithTestCollab(projectId, gherkinTree, removeOrphaned, apiUrl, token) {
+  const payload = {
+    project: parseInt(projectId),
+    gherkinTree: gherkinTree,
+    removeOrphaned: removeOrphaned
+  };
+  
+  console.log('🚀 Syncing with Test Collab...');
+  console.log({payload, apiUrl})
   try {
-    // Create a new test case payload
-    const payload = {
-      title: title,
-      body: content,
-      test_type: 'gherkin'
-    };
-    
-    await apiClient.createTestCase({
-      projectId: projectId,
-      testCasePayload: payload
+    const response = await fetch(`${apiUrl}/testcases/gherkin?token=${token}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        //'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify(payload)
     });
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`API request failed (${response.status}): ${errorText}`);
+    }
+    
+    const result = await response.json();
+    
+    // Display sync results
+    if (result.created) {
+      console.log(`✨ Created: ${result.created.suites || 0} suite(s), ${result.created.testCases || 0} test case(s)`);
+    }
+    
+    if (result.updated) {
+      console.log(`🔄 Updated: ${result.updated.suites || 0} suite(s), ${result.updated.testCases || 0} test case(s)`);
+    }
+    
+    if (result.deleted && removeOrphaned) {
+      console.log(`🗑️  Deleted: ${result.deleted.suites || 0} suite(s), ${result.deleted.testCases || 0} test case(s)`);
+    }
+    
+    return result;
   } catch (error) {
-    throw new Error(`Failed to create test case: ${error.message}`);
+    if (error.name === 'TypeError' && error.message.includes('fetch')) {
+      throw new Error(`Failed to connect to Test Collab API at ${apiUrl}. Please check your network connection and API URL.`);
+    }
+    throw error;
   }
 }
 
