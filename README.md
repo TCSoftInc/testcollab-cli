@@ -25,7 +25,7 @@ npm install -g testcollab-cli
 After global installation, you can use the `tc` command from anywhere:
 
 ```bash
-tc sync --project 123
+tc featuresync --project 123
 ```
 
 ### Local Installation
@@ -37,7 +37,7 @@ npm install testcollab-cli --save-dev
 With local installation, use npx to run commands:
 
 ```bash
-npx tc sync --project 123
+npx tc featuresync --project 123
 ```
 
 ## Prerequisites
@@ -69,14 +69,14 @@ You can obtain an API token from your TestCollab account settings.
 
 ## Commands
 
-### `tc sync`
+### `tc featuresync`
 
 Synchronizes Gherkin feature files from your Git repository with TestCollab using intelligent diff analysis.
 
 #### Syntax
 
 ```bash
-tc sync --project <project_id> [options]
+tc featuresync --project <project_id> [options]
 ```
 
 #### Required Options
@@ -92,13 +92,13 @@ tc sync --project <project_id> [options]
 ##### Basic Sync
 
 ```bash
-tc sync --project 123
+tc featuresync --project 123
 ```
 
 ##### Custom API URL
 
 ```bash
-tc sync --project 123 --api-url https://your-testcollab.com/api
+tc featuresync --project 123 --api-url https://your-testcollab.com/api
 ```
 
 ## How It Works
@@ -142,7 +142,7 @@ When content changes, the CLI:
 ### Initial Sync
 
 ```bash
-$ tc sync --project 123
+$ tc featuresync --project 123
 
 🔍 Fetching sync state from TestCollab...
 📊 Last synced commit: none (initial sync)
@@ -164,7 +164,7 @@ $ tc sync --project 123
 ### Subsequent Sync with Changes
 
 ```bash
-$ tc sync --project 123
+$ tc featuresync --project 123
 
 🔍 Fetching sync state from TestCollab...
 📊 Last synced commit: a1b2c3d4
@@ -187,7 +187,7 @@ $ tc sync --project 123
 ### No Changes
 
 ```bash
-$ tc sync --project 123
+$ tc featuresync --project 123
 
 🔍 Fetching sync state from TestCollab...
 📊 Last synced commit: e5f6g7h8
@@ -255,7 +255,7 @@ jobs:
       
       - run: npm install -g testcollab-cli
       
-      - run: tc sync --project ${{ secrets.TESTCOLLAB_PROJECT_ID }}
+      - run: tc featuresync --project ${{ secrets.TESTCOLLAB_PROJECT_ID }}
         env:
           TESTCOLLAB_TOKEN: ${{ secrets.TESTCOLLAB_TOKEN }}
 ```
@@ -269,7 +269,7 @@ sync-features:
   before_script:
     - npm install -g testcollab-cli
   script:
-    - tc sync --project $TESTCOLLAB_PROJECT_ID
+    - tc featuresync --project $TESTCOLLAB_PROJECT_ID
   variables:
     TESTCOLLAB_TOKEN: $TESTCOLLAB_TOKEN
   only:
@@ -290,7 +290,7 @@ If you see a `409` error, it means another sync has occurred since your last syn
 **Solution**: Pull the latest changes and try again:
 ```bash
 git pull origin main
-tc sync --project 123
+tc featuresync --project 123
 ```
 
 ### Parser Errors
