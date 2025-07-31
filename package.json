@@ -1,0 +1,45 @@
+{
+  "name": "testcollab-cli",
+  "version": "1.0.0",
+  "description": "Command-line interface for TestCollab operations",
+  "main": "src/index.js",
+  "bin": {
+    "tc": "./src/index.js"
+  },
+  "type": "module",
+  "scripts": {
+    "test": "NODE_OPTIONS=\"--experimental-vm-modules\" jest"
+  },
+  "jest": {
+    "testEnvironment": "node"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0"
+  },
+  "keywords": [
+    "testcollab",
+    "testing",
+    "bdd",
+    "gherkin",
+    "cli"
+  ],
+  "author": "TestCollab",
+  "license": "MIT",
+  "dependencies": {
+    "@cucumber/gherkin": "^33.1.0",
+    "@cucumber/messages": "^28.1.0",
+    "commander": "^11.1.0",
+    "simple-git": "^3.28.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/testcollab/testcollab-cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/testcollab/testcollab-cli/issues"
+  },
+  "homepage": "https://github.com/testcollab/testcollab-cli#readme"
+}
