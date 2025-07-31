@@ -138,12 +138,13 @@ export async function featuresync(options) {
  * Fetch the last synced commit SHA from TestCollab
  */
 async function fetchSyncState(projectId, apiUrl, token) {
-  const url = `${apiUrl}/bdd/sync?project=${projectId}`;
+  const url = `${apiUrl}/bdd/sync?project=${projectId}?token=${token}`;
   
   try {
     const response = await fetch(url, {
+      method: 'GET',
       headers: {
-        'Authorization': `Bearer ${token}`
+        'Content-Type': 'application/json'
       }
     });
     
@@ -324,11 +325,11 @@ async function resolveIds(projectId, hashes, apiUrl, token) {
   }
   
   try {
-    const response = await fetch(`${apiUrl}/resolve-ids`, {
+    const response = await fetch(`${apiUrl}/resolve-ids?token=${token}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`
+        //'Authorization': `Bearer ${token}`
       },
       body: JSON.stringify(payload)
     });
@@ -398,11 +399,10 @@ function buildSyncPayload(projectId, prevCommit, headCommit, changes, resolvedId
  */
 async function syncWithTestCollab(payload, apiUrl, token) {
   try {
-    const response = await fetch(`${apiUrl}/bdd/sync`, {
+    const response = await fetch(`${apiUrl}/bdd/sync?token=${token}`, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`
+        'Content-Type': 'application/json'
       },
       body: JSON.stringify(payload)
     });
