@@ -138,7 +138,7 @@ export async function featuresync(options) {
  * Fetch the last synced commit SHA from TestCollab
  */
 async function fetchSyncState(projectId, apiUrl, token) {
-  const url = `${apiUrl}/bdd/sync?project=${projectId}?token=${token}`;
+  const url = `${apiUrl}/bdd/sync?project=${projectId}&token=${token}`;
   
   try {
     const response = await fetch(url, {
