@@ -68,7 +68,9 @@ export async function featuresync(options) {
     if (lastSyncedCommit) {
       // Regular sync - compare with last synced commit
       const diffOptions = ['--name-status', '--find-renames', `${lastSyncedCommit}..HEAD`];
+
       const diffResult = await git.diff(diffOptions);
+      console.log(diffResult);
       changes = parseDiffOutput(diffResult);
     } else {
       // Initial sync - get all .feature files in the repository
@@ -152,7 +154,7 @@ async function fetchSyncState(projectId, apiUrl, token) {
     });
     
     if (!response.ok) {
-      throw new Error(`Failed to fetch sync state: ${response.status} ${response.statusText}`);
+      throw new Error(`Failed to fetch sync state: ${response.status} ${response.statusText}! Check if project ID and API URL are correct.`);
     }
     
     const data = await response.json();
@@ -310,7 +312,7 @@ function calculateHash(content) {
  */
 async function resolveIds(projectId, hashes, apiUrl, token) {
   if (hashes.features.length === 0 && hashes.scenarios.length === 0) {
-    return { suites: {}, test_cases: {} };
+    return { suites: {}, cases: {} };
   }
   
   const payload = { projectId };
@@ -322,7 +324,7 @@ async function resolveIds(projectId, hashes, apiUrl, token) {
   }
   
   try {
-    const response = await fetch(`${apiUrl}/resolve-ids?token=${token}`, {
+    const response = await fetch(`${apiUrl}/bdd/resolve-ids?token=${token}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -335,7 +337,14 @@ async function resolveIds(projectId, hashes, apiUrl, token) {
       throw new Error(`Failed to resolve IDs: ${response.status} ${response.statusText}`);
     }
     
-    return await response.json();
+    const responseData = await response.json();
+    
+    // Extract the results from the nested structure
+    const results = responseData.results || {};
+    return {
+      suites: results.suites || {},
+      cases: results.cases || {}
+    };
   } catch (error) {
     throw new Error(`Failed to resolve IDs: ${error.message}`);
   }
@@ -361,6 +370,15 @@ function buildSyncPayload(projectId, prevCommit, headCommit, changes, resolvedId
     
     if (change.feature) {
       payloadChange.feature = change.feature;
+      
+      // For renames or modifications, include the suiteId if we have it
+      if (change.oldFeatureHash) {
+        const suiteInfo = resolvedIds.suites[change.oldFeatureHash];
+        console.log(suiteInfo);
+        if (suiteInfo && suiteInfo.id) {
+          payloadChange.feature.suiteId = suiteInfo.id;
+        }
+      }
     }
     
     if (change.scenarios) {
@@ -371,13 +389,13 @@ function buildSyncPayload(projectId, prevCommit, headCommit, changes, resolvedId
         };
         
         // Add caseId if this is an update to existing scenario
-        const caseId = resolvedIds.test_cases[scenario.hash];
-        if (caseId) {
-          payloadScenario.caseId = caseId;
+        const caseInfo = resolvedIds.cases[scenario.hash];
+        if (caseInfo && caseInfo.id) {
+          payloadScenario.caseId = caseInfo.id;
         }
         
         // Include steps for new or modified scenarios
-        if (!caseId || scenario.steps) {
+        if (!caseInfo || scenario.steps) {
           payloadScenario.steps = scenario.steps;
         }
         
