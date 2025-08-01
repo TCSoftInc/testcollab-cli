@@ -43,6 +43,9 @@ export async function featuresync(options) {
       process.exit(1);
     }
 
+    // Check for uncommitted changes to .feature files
+    await checkUncommittedChanges(git);
+
     console.log('🔍 Fetching sync state from TestCollab...');
     
     // Step 1: Fetch last synced commit from server
@@ -464,5 +467,51 @@ function displaySyncResults(result) {
   
   if (totalChanges === 0) {
     console.log('ℹ️  No changes were required - everything is already in sync');
+  }
+}
+
+/**
+ * Check for uncommitted changes to .feature files and warn the user
+ */
+async function checkUncommittedChanges(git) {
+  try {
+    // Get both staged and unstaged changes
+    const statusResult = await git.status();
+    
+    // Filter for .feature files only
+    const uncommittedFeatureFiles = [];
+    
+    // Check staged files
+    statusResult.staged.forEach(file => {
+      if (file.endsWith('.feature')) {
+        uncommittedFeatureFiles.push(file);
+      }
+    });
+    
+    // Check modified (unstaged) files
+    statusResult.modified.forEach(file => {
+      if (file.endsWith('.feature') && !uncommittedFeatureFiles.includes(file)) {
+        uncommittedFeatureFiles.push(file);
+      }
+    });
+    
+    // Check created (untracked) files
+    statusResult.created.forEach(file => {
+      if (file.endsWith('.feature') && !uncommittedFeatureFiles.includes(file)) {
+        uncommittedFeatureFiles.push(file);
+      }
+    });
+    
+    // Show warning if uncommitted changes exist
+    if (uncommittedFeatureFiles.length > 0) {
+      console.log('⚠️  Warning: You have uncommitted changes in the following .feature files:');
+      uncommittedFeatureFiles.forEach(file => {
+        console.log(`   📄 ${file}`);
+      });
+      console.log('   These changes will not be synced. Please commit them first if you want them included.\n');
+    }
+  } catch (error) {
+    // If git status fails, just continue - don't block the sync
+    console.warn(`⚠️  Warning: Could not check for uncommitted changes: ${error.message}`);
   }
 }
