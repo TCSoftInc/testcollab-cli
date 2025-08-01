@@ -136,10 +136,8 @@ describe('Scenario 1: Initial Sync', () => {
     // Verify background steps
     expect(Array.isArray(authChange.feature.background)).toBe(true);
     expect(authChange.feature.background).toHaveLength(2);
-    expect(authChange.feature.background[0].keyword).toBe('Given');
-    expect(authChange.feature.background[0].text).toBe('the application is running');
-    expect(authChange.feature.background[1].keyword).toBe('And');
-    expect(authChange.feature.background[1].text).toBe('I am on the login page');
+    expect(authChange.feature.background[0]).toBe('Given the application is running');
+    expect(authChange.feature.background[1]).toBe('And I am on the login page');
     
     // Verify scenarios
     expect(Array.isArray(authChange.scenarios)).toBe(true);
@@ -158,8 +156,7 @@ describe('Scenario 1: Initial Sync', () => {
     
     // Verify specific steps for successful login
     expect(successScenario.steps).toHaveLength(5);
-    expect(successScenario.steps[0].keyword).toBe('When');
-    expect(successScenario.steps[0].text).toBe('I enter "valid@example.com" in the email field');
+    expect(successScenario.steps[0]).toBe('When I enter "valid@example.com" in the email field');
     
     // === VERIFY ACCOUNT FEATURE ===
     expect(accountChange.feature).toBeTruthy();

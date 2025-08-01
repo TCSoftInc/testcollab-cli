@@ -266,10 +266,7 @@ function parseGherkinFile(content) {
         scenarios.push({
           hash: calculateHash(stepsText),
           title: scenario.name,
-          steps: steps.map(step => ({
-            keyword: step.keyword.trim(),
-            text: step.text
-          }))
+          steps: steps.map(step => `${step.keyword}${step.text}`)
         });
       } else if (child.background) {
         // Background is in children, not directly on feature
@@ -288,10 +285,7 @@ function parseGherkinFile(content) {
     return {
       feature: {
         name: feature.name,
-        background: background ? background.steps.map(step => ({
-          keyword: step.keyword.trim(),
-          text: step.text
-        })) : undefined
+        background: background ? background.steps.map(step => `${step.keyword}${step.text}`) : undefined
       },
       featureHash: calculateHash(featureContent),
       scenarios

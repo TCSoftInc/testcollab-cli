@@ -368,9 +368,7 @@ export const VALIDATORS = {
    */
   areValidSteps: (steps) => {
     return Array.isArray(steps) && steps.every(step => 
-      step.keyword && step.text && 
-      typeof step.keyword === 'string' && 
-      typeof step.text === 'string'
+      typeof step === 'string' && step.length > 0
     );
   }
 };
