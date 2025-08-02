@@ -16,6 +16,8 @@ import * as gherkin from '@cucumber/gherkin';
 import * as messages from '@cucumber/messages';
 import { createHash } from 'crypto';
 import path from 'path';
+// fs - file
+import fs from 'fs';
 
 /**
  * Main featuresync command handler
@@ -124,6 +126,11 @@ export async function featuresync(options) {
       processedChanges,
       resolvedIds
     );
+    console.log({payload});
+    // log payload in file
+    const payloadFilePath = path.join(process.cwd(), 'sync-payload.json');
+    fs.writeFileSync(payloadFilePath, JSON.stringify(payload, null, 2));
+    console.log(`📂 Payload written to ${payloadFilePath}`);
 
     // Step 7: Send to TestCollab
     console.log('🚀 Syncing with TestCollab...');
@@ -211,7 +218,7 @@ async function processChange(git, change, lastSyncedCommit) {
     // Get old file content for M, D, R changes
     if (change.oldPath && lastSyncedCommit) {
       const oldContent = await git.show([`${lastSyncedCommit}:${change.oldPath}`]);
-      const oldParsed = parseGherkinFile(oldContent);
+      const oldParsed = parseGherkinFile(oldContent, change.oldPath);
       if (oldParsed) {
         processed.oldFeatureHash = oldParsed.featureHash;
         processed.oldScenarioHashes = oldParsed.scenarios.map(s => s.hash);
@@ -221,7 +228,7 @@ async function processChange(git, change, lastSyncedCommit) {
     // Get new file content for A, M, R changes
     if (change.newPath) {
       const newContent = await git.show([`HEAD:${change.newPath}`]);
-      const newParsed = parseGherkinFile(newContent);
+      const newParsed = parseGherkinFile(newContent, change.newPath);
       if (newParsed) {
         processed.feature = {
           hash: newParsed.featureHash,
@@ -242,7 +249,7 @@ async function processChange(git, change, lastSyncedCommit) {
 /**
  * Parse a Gherkin file and extract structured data
  */
-function parseGherkinFile(content) {
+function parseGherkinFile(content, filePath) {
   try {
     // Use the v33 syntax with proper Parser/AstBuilder approach
     const uuidFn = messages.IdGenerator.uuid();
@@ -269,7 +276,7 @@ function parseGherkinFile(content) {
         const stepsText = steps.map(step => `${step.keyword}${step.text}`).join('\n');
         
         scenarios.push({
-          hash: calculateHash(stepsText),
+          hash: calculateHash(stepsText, filePath),
           title: scenario.name,
           steps: steps.map(step => `${step.keyword}${step.text}`)
         });
@@ -292,7 +299,7 @@ function parseGherkinFile(content) {
         name: feature.name,
         background: background ? background.steps.map(step => `${step.keyword}${step.text}`) : undefined
       },
-      featureHash: calculateHash(featureContent),
+      featureHash: calculateHash(featureContent, filePath),
       scenarios
     };
   } catch (error) {
@@ -301,10 +308,12 @@ function parseGherkinFile(content) {
 }
 
 /**
- * Calculate SHA-1 hash for content
+ * Calculate SHA-1 hash for content and file path
+ * Including the file path ensures renames generate new hashes
  */
-function calculateHash(content) {
-  return createHash('sha1').update(content, 'utf8').digest('hex');
+function calculateHash(content, filePath) {
+  const data = `${filePath}:${content}`;
+  return createHash('sha1').update(data, 'utf8').digest('hex');
 }
 
 /**
@@ -371,6 +380,11 @@ function buildSyncPayload(projectId, prevCommit, headCommit, changes, resolvedId
     if (change.feature) {
       payloadChange.feature = change.feature;
       
+      // For renames, include the prevHash
+      if (change.status.startsWith('R') && change.oldFeatureHash) {
+        payloadChange.feature.prevHash = change.oldFeatureHash;
+      }
+      
       // For renames or modifications, include the suiteId if we have it
       if (change.oldFeatureHash) {
         const suiteInfo = resolvedIds.suites[change.oldFeatureHash];
@@ -382,20 +396,33 @@ function buildSyncPayload(projectId, prevCommit, headCommit, changes, resolvedId
     }
     
     if (change.scenarios) {
-      payloadChange.scenarios = change.scenarios.map(scenario => {
+      payloadChange.scenarios = change.scenarios.map((scenario, index) => {
         const payloadScenario = {
           hash: scenario.hash,
           title: scenario.title
         };
         
-        // Add caseId if this is an update to existing scenario
-        const caseInfo = resolvedIds.cases[scenario.hash];
-        if (caseInfo && caseInfo.id) {
-          payloadScenario.caseId = caseInfo.id;
+        // For modifications/renames, include the prevHash (map by index since scenarios are in same order)
+        if (change.oldScenarioHashes && change.oldScenarioHashes[index]) {
+          payloadScenario.prevHash = change.oldScenarioHashes[index];
         }
         
-        // Include steps for new or modified scenarios
-        if (!caseInfo || scenario.steps) {
+        // Add caseId if this is an update to existing scenario (use prevHash to look up)
+        if (payloadScenario.prevHash) {
+          const caseInfo = resolvedIds.cases[payloadScenario.prevHash];
+          if (caseInfo && caseInfo.id) {
+            payloadScenario.caseId = caseInfo.id;
+          }
+        }
+        
+        // Include steps based on Git status:
+        // - R100 = rename only, no content change → don't include steps
+        // - R97, R95, etc. = rename + content change → include steps
+        // - M = modification → include steps  
+        // - A = addition → include steps
+        const shouldIncludeSteps = change.status !== 'R100';
+        
+        if (shouldIncludeSteps) {
           payloadScenario.steps = scenario.steps;
         }
         
