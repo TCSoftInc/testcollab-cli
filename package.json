@@ -36,10 +36,10 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/testcollab/testcollab-cli.git"
+    "url": "https://github.com/TCSoftInc/testcollab-cli.git"
   },
   "bugs": {
-    "url": "https://github.com/testcollab/testcollab-cli/issues"
+    "url": "https://github.com/TCSoftInc/testcollab-cli/issues"
   },
-  "homepage": "https://github.com/testcollab/testcollab-cli#readme"
+  "homepage": "https://github.com/TCSoftInc/testcollab-cli#readme"
 }
