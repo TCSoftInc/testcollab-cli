@@ -271,3 +271,17 @@ When your changes are ready, they'll be published to npm and users will get the 
 - `tests/README.md` - Testing strategy
 - `gherkin-docs/bdd-integration/` - Integration scenarios
 - `api/BDD_DEV_NOTES.md` - Server-side development notes
+
+## Publishing instructions
+
+    # 1) Dry run packaging
+    npm pack
+
+    # 2) Version bump (pick one)
+    npm version patch -m "release %s"   # or minor/major
+
+    # 3) Publish (unscoped)
+    npm publish
+
+    # 4) Push git tags
+    git push --follow-tags
