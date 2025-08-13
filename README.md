@@ -1,18 +1,12 @@
 # TestCollab CLI
 
+## Feature Sync utility for Behavior driven development (BDD)
+
 A command-line interface for TestCollab operations, providing Git-based synchronization of Gherkin feature files with TestCollab projects.
 
 ## Overview
 
-This CLI tool implements a sophisticated Git-based workflow to synchronize Gherkin feature files between your local repository and TestCollab. It preserves historical test results even when files, folders, or titles are renamed or moved.
-
-### Key Features
-
-- **Git-based Change Detection**: Uses `git diff` to identify exactly what changed since the last sync
-- **Smart Hash Calculation**: Calculates deterministic hashes for features and scenarios to track content changes
-- **Preserves Test History**: Maintains execution history even when files are renamed or content is modified
-- **Atomic Operations**: All changes are applied transactionally - if any part fails, nothing is changed
-- **Efficient Syncing**: Only processes changed files, making it suitable for large repositories
+This CLI tool implements a sophisticated Git-based workflow to synchronize Gherkin feature files between your local repository and TestCollab. All the feature files along with the hierarchical path they are in, are synced with TestCollab's test suite and test cases tree.
 
 ## Installation
 
@@ -25,6 +19,7 @@ npm install -g testcollab-cli
 After global installation, you can use the `tc` command from anywhere:
 
 ```bash
+export TESTCOLLAB_API_KEY=abcdef...
 tc featuresync --project 123
 ```
 
@@ -37,13 +32,14 @@ npm install testcollab-cli --save-dev
 With local installation, use npx to run commands:
 
 ```bash
+export TESTCOLLAB_API_KEY=abcdef...
 npx tc featuresync --project 123
 ```
 
 ## Prerequisites
 
-1. **Git Repository**: The CLI must be run from within a Git repository containing `.feature` files
-2. **Committed Changes**: The files you want to sync must be committed to Git
+1. **Git Repository**: The CLI must be run from within a Git repository containing `.feature` files. Other version control systems are not supported.
+2. **Committed Changes**: The files you want to sync must be committed to Git. If you try to run sync on uncommitted changes, it will display a silent warning.
 3. **API Token**: A valid TestCollab API token with project access
 
 ## Authentication
@@ -100,42 +96,6 @@ tc featuresync --project 123
 ```bash
 tc featuresync --project 123 --api-url https://your-testcollab.com/api
 ```
-
-## How It Works
-
-### Workflow Overview
-
-1. **Fetch Sync State**: Retrieves the last synced commit SHA from TestCollab
-2. **Analyze Changes**: Uses `git diff --find-renames` to identify what changed since the last sync
-3. **Calculate Hashes**: Computes deterministic hashes for old and new versions of features/scenarios
-4. **Resolve IDs**: Maps old hashes to existing TestCollab suite/test case IDs
-5. **Build Payload**: Constructs a detailed change set with minimal, precise operations
-6. **Sync**: Sends the payload to TestCollab for atomic processing
-7. **Update State**: Records the new commit SHA for the next sync
-
-### Change Detection
-
-The CLI uses Git's native diff capabilities to detect:
-
-- **Added files** (`A`): New `.feature` files
-- **Modified files** (`M`): Changes to existing `.feature` files  
-- **Deleted files** (`D`): Removed `.feature` files
-- **Renamed files** (`R100`): Pure renames with no content changes
-- **Renamed + Modified** (`R97`, etc.): Files that were both renamed and had content changes
-
-### Hash Calculation
-
-- **Feature Hash**: Based on all step text (background + scenarios), ignoring titles and paths
-- **Scenario Hash**: Based on the step text only, ignoring scenario titles
-- **Deterministic**: Same content always produces the same hash, enabling reliable change detection
-
-### Smart ID Resolution
-
-When content changes, the CLI:
-1. Calculates hashes for the old version (from the previous commit)
-2. Sends these hashes to TestCollab's `/resolve-ids` endpoint
-3. Gets back the corresponding suite/test case IDs
-4. Uses these IDs to update existing items rather than creating duplicates
 
 ## Example Output
 
@@ -225,7 +185,7 @@ $ tc featuresync --project 123
 ## Best Practices
 
 1. **Commit Before Syncing**: Always commit your `.feature` files before running sync
-2. **Regular Syncing**: Sync frequently to avoid large change sets
+2. **Regular Syncing**: Sync frequently to avoid large change sets, we recommend integrating with CI so all feature files are automatically synced.
 3. **Meaningful Commit Messages**: Use clear commit messages as they help track sync history
 4. **Test in Development**: Test the sync in a development project before using in production
 5. **Branch Strategy**: Consider your Git branching strategy - sync from the branch that represents your test suite
@@ -331,9 +291,10 @@ npm link  # Makes 'tc' command available globally
 
 For issues and questions:
 
-- GitHub Issues: [Report a bug or request a feature](https://github.com/testcollab/testcollab-cli/issues)
-- Documentation: [TestCollab Documentation](https://docs.testcollab.io)
+- GitHub Issues: [Report a bug or request a feature](https://github.com/TCSoftInc/testcollab-cli/issues)
+- Documentation: [TestCollab Documentation](https://help.testcollab.com)
 - Support: Contact TestCollab support team
+- Test Collab: [TestCollab website](https://testcollab.com)
 
 ## License
 
