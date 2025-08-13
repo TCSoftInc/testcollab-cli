@@ -42,6 +42,11 @@ npx tc featuresync --project 123
 2. **Committed Changes**: The files you want to sync must be committed to Git. If you try to run sync on uncommitted changes, it will display a silent warning.
 3. **API Token**: A valid TestCollab API token with project access
 
+## Sample project
+
+You can use this repo as a sample project: https://github.com/TCSoftInc/testcollab-bdd-demo
+Fork it, and run 'featuresync' to try how the sync works before integrating live project.
+
 ## Authentication
 
 Set your TestCollab API token as an environment variable:
