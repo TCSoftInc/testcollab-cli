@@ -19,8 +19,8 @@ npm install -g testcollab-cli
 After global installation, you can use the `tc` command from anywhere:
 
 ```bash
-export TESTCOLLAB_API_KEY=abcdef...
-tc featuresync --project 123
+export TESTCOLLAB_TOKEN=abcdef...
+tc sync --project 123
 ```
 
 ### Local Installation
@@ -32,8 +32,8 @@ npm install testcollab-cli --save-dev
 With local installation, use npx to run commands:
 
 ```bash
-export TESTCOLLAB_API_KEY=abcdef...
-npx tc featuresync --project 123
+export TESTCOLLAB_TOKEN=abcdef...
+npx tc sync --project 123
 ```
 
 ## Prerequisites

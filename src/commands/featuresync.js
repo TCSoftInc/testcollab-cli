@@ -126,11 +126,11 @@ export async function featuresync(options) {
       processedChanges,
       resolvedIds
     );
-    console.log({payload});
+    //console.log({payload});
     // log payload in file
-    const payloadFilePath = path.join(process.cwd(), 'sync-payload.json');
-    fs.writeFileSync(payloadFilePath, JSON.stringify(payload, null, 2));
-    console.log(`📂 Payload written to ${payloadFilePath}`);
+    //const payloadFilePath = path.join(process.cwd(), 'sync-payload.json');
+    //fs.writeFileSync(payloadFilePath, JSON.stringify(payload, null, 2));
+    //console.log(`📂 Payload written to ${payloadFilePath}`);
 
     // Step 7: Send to TestCollab
     console.log('🚀 Syncing with TestCollab...');
@@ -151,6 +151,7 @@ export async function featuresync(options) {
  */
 async function fetchSyncState(projectId, apiUrl, token) {
   const url = `${apiUrl}/bdd/sync?project=${projectId}&token=${token}`;
+  console.log(`Fetching sync state from: ${url}`);
   
   try {
     const response = await fetch(url, {
