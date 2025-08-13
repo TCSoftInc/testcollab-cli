@@ -293,7 +293,7 @@ For issues and questions:
 
 - GitHub Issues: [Report a bug or request a feature](https://github.com/TCSoftInc/testcollab-cli/issues)
 - Documentation: [TestCollab Documentation](https://help.testcollab.com)
-- Support: Contact TestCollab support team
+- Support: support@testcollab.com
 - Test Collab: [TestCollab website](https://testcollab.com)
 
 ## License
