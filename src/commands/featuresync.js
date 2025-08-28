@@ -234,6 +234,7 @@ async function processChange(git, change, lastSyncedCommit) {
         processed.feature = {
           hash: newParsed.featureHash,
           title: newParsed.feature.name,
+          description: newParsed.feature.FeatureDescription,
           background: newParsed.feature.background
         };
         processed.scenarios = newParsed.scenarios;
@@ -245,6 +246,37 @@ async function processChange(git, change, lastSyncedCommit) {
     console.warn(`⚠️  Warning: Could not process ${change.oldPath || change.newPath}: ${error.message}`);
     return null;
   }
+}
+
+/**
+ * Extract feature description text that appears between Feature: and Background/Scenario tags
+ */
+function extractFeatureDescription(content) {
+  const lines = content.split('\n');
+  let description = '';
+  let inDescription = false;
+  
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    
+    if (line.startsWith('Feature:')) {
+      inDescription = true;
+      continue;
+    }
+    
+    if (inDescription) {
+      if (line.startsWith('Background:') || line.startsWith('Scenario:')) {
+        break;
+      }
+      
+      if (line && !line.startsWith('#')) {
+        if (description) description += '\n';
+        description += line;
+      }
+    }
+  }
+  
+  return description.trim();
 }
 
 /**
@@ -269,6 +301,9 @@ function parseGherkinFile(content, filePath) {
     const scenarios = [];
     let background = null;
     
+    // Extract feature description text that appears between Feature: and Background/Scenario
+    const featureDescription = extractFeatureDescription(content);
+    
     // Process children to find scenarios and background
     for (const child of feature.children || []) {
       if (child.scenario) {
@@ -287,8 +322,11 @@ function parseGherkinFile(content, filePath) {
       }
     }
     
-    // Calculate feature hash based on background + all scenario steps
+    // Calculate feature hash based on description + background + all scenario steps
     let featureContent = '';
+    if (featureDescription) {
+      featureContent += featureDescription + '\n';
+    }
     if (background) {
       const bgSteps = background.steps || [];
       featureContent += bgSteps.map(step => `${step.keyword}${step.text}`).join('\n');
@@ -298,6 +336,7 @@ function parseGherkinFile(content, filePath) {
     return {
       feature: {
         name: feature.name,
+        FeatureDescription: featureDescription || '',
         background: background ? background.steps.map(step => `${step.keyword}${step.text}`) : undefined
       },
       featureHash: calculateHash(featureContent, filePath),
