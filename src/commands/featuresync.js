@@ -217,13 +217,16 @@ async function processChange(git, change, lastSyncedCommit) {
 
   try {
     // Get old file content for M, D, R changes
-    if (change.oldPath && lastSyncedCommit) {
-      const oldContent = await git.show([`${lastSyncedCommit}:${change.oldPath}`]);
-      const oldParsed = parseGherkinFile(oldContent, change.oldPath);
+    if (lastSyncedCommit) {
+      const oldPathForLookup = change.oldPath || change.newPath;
+      if (oldPathForLookup) {
+        const oldContent = await git.show([`${lastSyncedCommit}:${oldPathForLookup}`]);
+        const oldParsed = parseGherkinFile(oldContent, oldPathForLookup);
       if (oldParsed) {
         processed.oldFeatureHash = oldParsed.featureHash;
         processed.oldScenarioHashes = oldParsed.scenarios.map(s => s.hash);
       }
+    }
     }
 
     // Get new file content for A, M, R changes
@@ -429,8 +432,8 @@ function buildSyncPayload(projectId, prevCommit, headCommit, changes, resolvedId
       if (change.oldFeatureHash) {
         const suiteInfo = resolvedIds.suites[change.oldFeatureHash];
         console.log(suiteInfo);
-        if (suiteInfo && suiteInfo.id) {
-          payloadChange.feature.suiteId = suiteInfo.id;
+        if (suiteInfo && suiteInfo.suiteId) {
+          payloadChange.feature.suiteId = suiteInfo.suiteId;
         }
       }
     }
@@ -450,8 +453,8 @@ function buildSyncPayload(projectId, prevCommit, headCommit, changes, resolvedId
         // Add caseId if this is an update to existing scenario (use prevHash to look up)
         if (payloadScenario.prevHash) {
           const caseInfo = resolvedIds.cases[payloadScenario.prevHash];
-          if (caseInfo && caseInfo.id) {
-            payloadScenario.caseId = caseInfo.id;
+          if (caseInfo && caseInfo.caseId) {
+            payloadScenario.caseId = caseInfo.caseId;
           }
         }
         
