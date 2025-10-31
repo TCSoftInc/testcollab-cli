@@ -271,7 +271,8 @@ async function processChange(git, change, lastSyncedCommit) {
           hash: newParsed.featureHash,
           title: newParsed.feature.name,
           description: newParsed.feature.FeatureDescription,
-          background: newParsed.feature.background
+          background: newParsed.feature.background,
+          backgroundText: newParsed.feature.backgroundText
         };
         processed.scenarios = newParsed.scenarios;
       }
@@ -316,6 +317,36 @@ function extractFeatureDescription(content) {
 }
 
 /**
+ * Extract any textual content inside Background: block (including non-step lines)
+ */
+function extractBackgroundText(content) {
+  const lines = content.split('\n');
+  let inBackground = false;
+  const backgroundLines = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (line.startsWith('Background:')) {
+      inBackground = true;
+      continue;
+    }
+    if (inBackground) {
+      if (
+        line.startsWith('Scenario:') ||
+        line.startsWith('Scenario Outline:') ||
+        line.startsWith('Rule:') ||
+        line.startsWith('Feature:')
+      ) {
+        break;
+      }
+      if (line && !line.startsWith('#')) {
+        backgroundLines.push(line);
+      }
+    }
+  }
+  return backgroundLines;
+}
+
+/**
  * Parse a Gherkin file and extract structured data
  */
 function parseGherkinFile(content, filePath) {
@@ -339,6 +370,7 @@ function parseGherkinFile(content, filePath) {
     
     // Extract feature description text that appears between Feature: and Background/Scenario
     const featureDescription = extractFeatureDescription(content);
+  const backgroundText = extractBackgroundText(content);
     
     // Process children to find scenarios and background
     for (const child of feature.children || []) {
@@ -372,8 +404,9 @@ function parseGherkinFile(content, filePath) {
     return {
       feature: {
         name: feature.name,
-        FeatureDescription: featureDescription || '',
-        background: background ? background.steps.map(step => `${step.keyword}${step.text}`) : undefined
+      FeatureDescription: featureDescription || '',
+      background: background ? background.steps.map(step => `${step.keyword}${step.text}`) : undefined,
+      backgroundText: backgroundText && backgroundText.length > 0 ? backgroundText : undefined
       },
       featureHash: calculateHash(featureContent, filePath),
       scenarios
