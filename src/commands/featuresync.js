@@ -19,6 +19,9 @@ import path from 'path';
 // fs - file
 import fs from 'fs';
 
+// Enable extra debug logs by setting BDD_SYNC_DEBUG=1
+const DEBUG_BDD_SYNC = process.env.BDD_SYNC_DEBUG === '1';
+
 /**
  * Main featuresync command handler
  * @param {Object} options - Command options from commander
@@ -88,6 +91,15 @@ export async function featuresync(options) {
     }
     
     console.log(`📄 Found ${changes.length} change(s)`);
+    if (changes.length > 0) {
+      console.log('   Details:');
+      changes.forEach((c, i) => {
+        const left = c.oldPath ? c.oldPath : '';
+        const right = c.newPath ? c.newPath : '';
+        const arrow = c.oldPath && c.newPath ? ' -> ' : '';
+        console.log(`   ${String(i + 1).padStart(2, ' ')}. ${c.status} ${left}${arrow}${right}`);
+      });
+    }
     if (changes.length === 0) {
       console.log('✅ No changes to sync');
       return;
@@ -115,7 +127,27 @@ export async function featuresync(options) {
 
     // Step 5: Resolve IDs for existing items
     console.log('🔍 Resolving existing item IDs...');
+    if (DEBUG_BDD_SYNC) {
+      console.log(`   ↪️  Requesting ID resolution for:`);
+      console.log(`      • feature hashes: ${oldHashes.features.length}`);
+      console.log(`      • scenario hashes: ${oldHashes.scenarios.length}`);
+    }
     const resolvedIds = await resolveIds(options.project, oldHashes, options.apiUrl, token);
+    if (DEBUG_BDD_SYNC) {
+      const suiteKeys = Object.keys(resolvedIds.suites || {});
+      const caseKeys = Object.keys(resolvedIds.cases || {});
+      console.log(`   ✅ Resolved IDs:`);
+      console.log(`      • suites mapped: ${suiteKeys.length}`);
+      console.log(`      • cases mapped: ${caseKeys.length}`);
+      if (suiteKeys.length > 0) {
+        const sample = suiteKeys.slice(0, 5).map(k => ({ hash: k, suiteId: resolvedIds.suites[k]?.suiteId }));
+        console.log(`      • sample suites:`, sample);
+      }
+      if (caseKeys.length > 0) {
+        const sample = caseKeys.slice(0, 5).map(k => ({ hash: k, caseId: resolvedIds.cases[k]?.caseId }));
+        console.log(`      • sample cases:`, sample);
+      }
+    }
 
     // Step 6: Build final payload
     console.log('📦 Building sync payload...');
@@ -216,14 +248,18 @@ async function processChange(git, change, lastSyncedCommit) {
   };
 
   try {
-    // Get old file content for M, D, R changes
-    if (change.oldPath && lastSyncedCommit) {
-      const oldContent = await git.show([`${lastSyncedCommit}:${change.oldPath}`]);
-      const oldParsed = parseGherkinFile(oldContent, change.oldPath);
+    // Get old file content for M, D, R changes (skip for A)
+    if (lastSyncedCommit && change.status !== 'A') {
+      const oldPathForLookup = change.oldPath || change.newPath;
+      if (oldPathForLookup) {
+        const oldContent = await git.show([`${lastSyncedCommit}:${oldPathForLookup}`]);
+        const oldParsed = parseGherkinFile(oldContent, oldPathForLookup);
       if (oldParsed) {
         processed.oldFeatureHash = oldParsed.featureHash;
         processed.oldScenarioHashes = oldParsed.scenarios.map(s => s.hash);
+        processed.oldScenarios = oldParsed.scenarios; // keep titles and hashes for smarter mapping
       }
+    }
     }
 
     // Get new file content for A, M, R changes
@@ -234,7 +270,9 @@ async function processChange(git, change, lastSyncedCommit) {
         processed.feature = {
           hash: newParsed.featureHash,
           title: newParsed.feature.name,
-          background: newParsed.feature.background
+          description: newParsed.feature.FeatureDescription,
+          background: newParsed.feature.background,
+          backgroundText: newParsed.feature.backgroundText
         };
         processed.scenarios = newParsed.scenarios;
       }
@@ -245,6 +283,67 @@ async function processChange(git, change, lastSyncedCommit) {
     console.warn(`⚠️  Warning: Could not process ${change.oldPath || change.newPath}: ${error.message}`);
     return null;
   }
+}
+
+/**
+ * Extract feature description text that appears between Feature: and Background/Scenario tags
+ */
+function extractFeatureDescription(content) {
+  const lines = content.split('\n');
+  let description = '';
+  let inDescription = false;
+  
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    
+    if (line.startsWith('Feature:')) {
+      inDescription = true;
+      continue;
+    }
+    
+    if (inDescription) {
+      if (line.startsWith('Background:') || line.startsWith('Scenario:')) {
+        break;
+      }
+      
+      if (line && !line.startsWith('#')) {
+        if (description) description += '\n';
+        description += line;
+      }
+    }
+  }
+  
+  return description.trim();
+}
+
+/**
+ * Extract any textual content inside Background: block (including non-step lines)
+ */
+function extractBackgroundText(content) {
+  const lines = content.split('\n');
+  let inBackground = false;
+  const backgroundLines = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (line.startsWith('Background:')) {
+      inBackground = true;
+      continue;
+    }
+    if (inBackground) {
+      if (
+        line.startsWith('Scenario:') ||
+        line.startsWith('Scenario Outline:') ||
+        line.startsWith('Rule:') ||
+        line.startsWith('Feature:')
+      ) {
+        break;
+      }
+      if (line && !line.startsWith('#')) {
+        backgroundLines.push(line);
+      }
+    }
+  }
+  return backgroundLines;
 }
 
 /**
@@ -269,6 +368,10 @@ function parseGherkinFile(content, filePath) {
     const scenarios = [];
     let background = null;
     
+    // Extract feature description text that appears between Feature: and Background/Scenario
+    const featureDescription = extractFeatureDescription(content);
+  const backgroundText = extractBackgroundText(content);
+    
     // Process children to find scenarios and background
     for (const child of feature.children || []) {
       if (child.scenario) {
@@ -287,8 +390,11 @@ function parseGherkinFile(content, filePath) {
       }
     }
     
-    // Calculate feature hash based on background + all scenario steps
+    // Calculate feature hash based on description + background + all scenario steps
     let featureContent = '';
+    if (featureDescription) {
+      featureContent += featureDescription + '\n';
+    }
     if (background) {
       const bgSteps = background.steps || [];
       featureContent += bgSteps.map(step => `${step.keyword}${step.text}`).join('\n');
@@ -298,7 +404,9 @@ function parseGherkinFile(content, filePath) {
     return {
       feature: {
         name: feature.name,
-        background: background ? background.steps.map(step => `${step.keyword}${step.text}`) : undefined
+      FeatureDescription: featureDescription || '',
+      background: background ? background.steps.map(step => `${step.keyword}${step.text}`) : undefined,
+      backgroundText: backgroundText && backgroundText.length > 0 ? backgroundText : undefined
       },
       featureHash: calculateHash(featureContent, filePath),
       scenarios
@@ -377,42 +485,73 @@ function buildSyncPayload(projectId, prevCommit, headCommit, changes, resolvedId
       oldPath: change.oldPath,
       newPath: change.newPath
     };
+    if (DEBUG_BDD_SYNC) {
+      console.log(`\n🧱 Change: ${change.status} ${change.oldPath || ''} -> ${change.newPath || ''}`);
+      if (change.oldFeatureHash) {
+        console.log(`   • oldFeatureHash: ${change.oldFeatureHash}`);
+      }
+    }
     
     if (change.feature) {
       payloadChange.feature = change.feature;
       
-      // For renames, include the prevHash
-      if (change.status.startsWith('R') && change.oldFeatureHash) {
+      // Include prevHash for any non-add change (Rxx and M) so API can update suite hash
+      if (change.oldFeatureHash && change.status !== 'A') {
         payloadChange.feature.prevHash = change.oldFeatureHash;
       }
       
       // For renames or modifications, include the suiteId if we have it
       if (change.oldFeatureHash) {
         const suiteInfo = resolvedIds.suites[change.oldFeatureHash];
-        console.log(suiteInfo);
-        if (suiteInfo && suiteInfo.id) {
-          payloadChange.feature.suiteId = suiteInfo.id;
+        if (suiteInfo && suiteInfo.suiteId) {
+          payloadChange.feature.suiteId = suiteInfo.suiteId;
+          if (DEBUG_BDD_SYNC) {
+            console.log(`   • suite mapping: ${change.oldFeatureHash} -> suiteId ${suiteInfo.suiteId}`);
+          }
+        } else if (DEBUG_BDD_SYNC) {
+          console.log(`   • suite mapping: ${change.oldFeatureHash} -> NOT FOUND`);
         }
       }
     }
     
     if (change.scenarios) {
+      // Build helper sets/maps for robust mapping
+      const oldHashesSet = new Set(change.oldScenarioHashes || []);
+      const oldTitleToHash = new Map((change.oldScenarios || []).map(s => [s.title, s.hash]));
+      const sameLengthAsOld = !!change.oldScenarioHashes && change.oldScenarioHashes.length === change.scenarios.length;
+
       payloadChange.scenarios = change.scenarios.map((scenario, index) => {
         const payloadScenario = {
           hash: scenario.hash,
           title: scenario.title
         };
         
-        // For modifications/renames, include the prevHash (map by index since scenarios are in same order)
-        if (change.oldScenarioHashes && change.oldScenarioHashes[index]) {
+        // Determine prevHash robustly:
+        // 1) If steps unchanged, new hash equals some old hash → use that
+        if (oldHashesSet.has(scenario.hash)) {
+          payloadScenario.prevHash = scenario.hash;
+          if (DEBUG_BDD_SYNC) {
+            console.log(`     · mapping by steps-hash equality`);
+          }
+        } else if (oldTitleToHash.has(scenario.title)) {
+          // 2) Title unchanged → use old hash by title
+          payloadScenario.prevHash = oldTitleToHash.get(scenario.title);
+          if (DEBUG_BDD_SYNC) {
+            console.log(`     · mapping by title match`);
+          }
+        } else if (sameLengthAsOld && change.oldScenarioHashes && change.oldScenarioHashes[index]) {
+          // 3) Fallback: index mapping only when counts are equal
           payloadScenario.prevHash = change.oldScenarioHashes[index];
+          if (DEBUG_BDD_SYNC) {
+            console.log(`     · mapping by index fallback`);
+          }
         }
         
         // Add caseId if this is an update to existing scenario (use prevHash to look up)
         if (payloadScenario.prevHash) {
           const caseInfo = resolvedIds.cases[payloadScenario.prevHash];
-          if (caseInfo && caseInfo.id) {
-            payloadScenario.caseId = caseInfo.id;
+          if (caseInfo && caseInfo.caseId) {
+            payloadScenario.caseId = caseInfo.caseId;
           }
         }
         
@@ -427,11 +566,53 @@ function buildSyncPayload(projectId, prevCommit, headCommit, changes, resolvedId
           payloadScenario.steps = scenario.steps;
         }
         
+        if (DEBUG_BDD_SYNC) {
+          console.log(`   • scenario[${index}] title="${scenario.title}"`);
+          console.log(`     - prevHash: ${payloadScenario.prevHash || 'none'}`);
+          console.log(`     - caseId: ${payloadScenario.caseId || 'none'}`);
+          console.log(`     - newHash: ${payloadScenario.hash}`);
+          console.log(`     - stepsIncluded: ${shouldIncludeSteps}`);
+        }
+        
         return payloadScenario;
       });
+      if (DEBUG_BDD_SYNC) {
+        const count = payloadChange.scenarios.length;
+        console.log(`   • scenarios prepared: ${count}`);
+      }
+    }
+    
+    // Include deleted scenarios (present before, missing now)
+    if (change.oldScenarioHashes && change.oldScenarioHashes.length > 0 && change.status !== 'A') {
+      const existingScenarios = payloadChange.scenarios || [];
+      const newHashes = new Set(existingScenarios.map(s => s.hash).filter(Boolean));
+      const newPrevHashes = new Set(existingScenarios.map(s => s.prevHash).filter(Boolean));
+      for (const oldHash of change.oldScenarioHashes) {
+        if (!newHashes.has(oldHash) && !newPrevHashes.has(oldHash)) {
+          existingScenarios.push({ prevHash: oldHash, deleted: true });
+          if (DEBUG_BDD_SYNC) {
+            console.log(`   • scenario deleted: prevHash ${oldHash}`);
+          }
+        }
+      }
+      if (existingScenarios.length > 0) {
+        payloadChange.scenarios = existingScenarios;
+        if (DEBUG_BDD_SYNC) {
+          const deletedCount = existingScenarios.filter(s => s.deleted).length;
+          console.log(`   • scenarios after deletion mark: ${existingScenarios.length} (deleted: ${deletedCount})`);
+        }
+      }
     }
     
     payload.changes.push(payloadChange);
+  }
+  
+  if (DEBUG_BDD_SYNC) {
+    console.log(`\n📦 Payload summary:`);
+    console.log(`   • projectId: ${payload.projectId}`);
+    console.log(`   • prevCommit: ${payload.prevCommit}`);
+    console.log(`   • headCommit: ${payload.headCommit}`);
+    console.log(`   • changes: ${payload.changes.length}`);
   }
   
   return payload;
