@@ -248,8 +248,8 @@ async function processChange(git, change, lastSyncedCommit) {
   };
 
   try {
-    // Get old file content for M, D, R changes
-    if (lastSyncedCommit) {
+    // Get old file content for M, D, R changes (skip for A)
+    if (lastSyncedCommit && change.status !== 'A') {
       const oldPathForLookup = change.oldPath || change.newPath;
       if (oldPathForLookup) {
         const oldContent = await git.show([`${lastSyncedCommit}:${oldPathForLookup}`]);
