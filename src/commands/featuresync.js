@@ -495,8 +495,8 @@ function buildSyncPayload(projectId, prevCommit, headCommit, changes, resolvedId
     if (change.feature) {
       payloadChange.feature = change.feature;
       
-      // For renames, include the prevHash
-      if (change.status.startsWith('R') && change.oldFeatureHash) {
+      // Include prevHash for any non-add change (Rxx and M) so API can update suite hash
+      if (change.oldFeatureHash && change.status !== 'A') {
         payloadChange.feature.prevHash = change.oldFeatureHash;
       }
       
