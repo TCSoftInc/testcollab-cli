@@ -45,7 +45,7 @@ npx tc sync --project 123
 ## Sample project
 
 You can use this repo as a sample project: https://github.com/TCSoftInc/testcollab-bdd-demo
-Fork it, and run 'featuresync' to try how the sync works before integrating live project.
+Fork it, and run `tc sync` to try how the sync works before integrating live project.
 
 ## Authentication
 
@@ -70,14 +70,14 @@ You can obtain an API token from your TestCollab account settings.
 
 ## Commands
 
-### `tc featuresync`
+### `tc sync`
 
 Synchronizes Gherkin feature files from your Git repository with TestCollab using intelligent diff analysis.
 
 #### Syntax
 
 ```bash
-tc featuresync --project <project_id> [options]
+tc sync --project <project_id> [options]
 ```
 
 #### Required Options
@@ -93,13 +93,108 @@ tc featuresync --project <project_id> [options]
 ##### Basic Sync
 
 ```bash
-tc featuresync --project 123
+tc sync --project 123
 ```
 
 ##### Custom API URL
 
 ```bash
-tc featuresync --project 123 --api-url https://your-testcollab.com/api
+tc sync --project 123 --api-url https://your-testcollab.com/api
+```
+
+#### Run from source (without installing globally)
+
+From the project root:
+
+```bash
+export TESTCOLLAB_TOKEN=abcdef...
+node ./src/index.js sync --project 123
+```
+
+---
+
+### `tc createTestPlan`
+
+Creates a new Test Plan in the given project, adds all test cases that have the specified CI tag, and assigns it to a user.
+
+#### Syntax
+
+```bash
+tc createTestPlan \
+  --api-key <key> \
+  --project <project_id> \
+  --ci-tag-id <tag_id> \
+  --assignee-id <user_id> \
+  --company-id <company_id> \
+  [--api-url <url>]
+```
+
+#### Required Options
+
+- `--api-key <key>`: TestCollab API key
+- `--project <id>`: Project ID
+- `--ci-tag-id <id>`: Tag ID used to select cases to include
+- `--assignee-id <id>`: User ID to assign the plan's execution
+- `--company-id <id>`: Company ID
+
+#### Optional Options
+
+- `--api-url <url>`: TestCollab API base URL (default: `https://api.testcollab.io`)
+
+#### Examples
+
+```bash
+tc createTestPlan --api-key $TESTCOLLAB_TOKEN --project 123 --ci-tag-id 456 --assignee-id 789 --company-id 100
+```
+
+This command writes the created plan id to `tmp/tc_test_plan` as `TESTCOLLAB_TEST_PLAN_ID=<id>`.
+
+#### Run from source
+
+```bash
+node ./src/index.js createTestPlan --api-key $TESTCOLLAB_TOKEN --project 123 --ci-tag-id 456 --assignee-id 789 --company-id 100
+```
+
+---
+
+### `tc report`
+
+Reads a Mochawesome JSON file and uploads the test run results for the given Test Plan. Internally uses the `uploadTCRunResult` from `testcollab-cypress-plugin`.
+
+#### Syntax
+
+```bash
+tc report \
+  --api-key <key> \
+  --project <project_id> \
+  --company-id <company_id> \
+  --test-plan-id <test_plan_id> \
+  [--mocha-json-result <path>] \
+  [--api-url <url>]
+```
+
+#### Required Options
+
+- `--api-key <key>`: TestCollab API key
+- `--project <id>`: Project ID
+- `--company-id <id>`: Company ID
+- `--test-plan-id <id>`: Test Plan ID to attach results
+
+#### Optional Options
+
+- `--mocha-json-result <path>`: Path to Mochawesome JSON (default: `./mochawesome-report/mochawesome.json`)
+- `--api-url <url>`: Override TestCollab API base URL if needed
+
+#### Examples
+
+```bash
+tc report --api-key $TESTCOLLAB_TOKEN --project 123 --company-id 100 --test-plan-id 555 --mocha-json-result ./mochawesome-report/mochawesome.json
+```
+
+#### Run from source
+
+```bash
+node ./src/index.js report --api-key $TESTCOLLAB_TOKEN --project 123 --company-id 100 --test-plan-id 555 --mocha-json-result ./mochawesome-report/mochawesome.json
 ```
 
 ## Example Output
@@ -107,7 +202,7 @@ tc featuresync --project 123 --api-url https://your-testcollab.com/api
 ### Initial Sync
 
 ```bash
-$ tc featuresync --project 123
+$ tc sync --project 123
 
 🔍 Fetching sync state from TestCollab...
 📊 Last synced commit: none (initial sync)
@@ -129,7 +224,7 @@ $ tc featuresync --project 123
 ### Subsequent Sync with Changes
 
 ```bash
-$ tc featuresync --project 123
+$ tc sync --project 123
 
 🔍 Fetching sync state from TestCollab...
 📊 Last synced commit: a1b2c3d4
@@ -152,7 +247,7 @@ $ tc featuresync --project 123
 ### No Changes
 
 ```bash
-$ tc featuresync --project 123
+$ tc sync --project 123
 
 🔍 Fetching sync state from TestCollab...
 📊 Last synced commit: e5f6g7h8
@@ -220,7 +315,7 @@ jobs:
       
       - run: npm install -g testcollab-cli
       
-      - run: tc featuresync --project ${{ secrets.TESTCOLLAB_PROJECT_ID }}
+      - run: tc sync --project ${{ secrets.TESTCOLLAB_PROJECT_ID }}
         env:
           TESTCOLLAB_TOKEN: ${{ secrets.TESTCOLLAB_TOKEN }}
 ```
@@ -234,7 +329,7 @@ sync-features:
   before_script:
     - npm install -g testcollab-cli
   script:
-    - tc featuresync --project $TESTCOLLAB_PROJECT_ID
+    - tc sync --project $TESTCOLLAB_PROJECT_ID
   variables:
     TESTCOLLAB_TOKEN: $TESTCOLLAB_TOKEN
   only:
@@ -255,7 +350,7 @@ If you see a `409` error, it means another sync has occurred since your last syn
 **Solution**: Pull the latest changes and try again:
 ```bash
 git pull origin main
-tc featuresync --project 123
+tc sync --project 123
 ```
 
 ### Parser Errors
