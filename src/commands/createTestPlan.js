@@ -156,7 +156,7 @@ export async function createTestPlan(options) {
       project: parsedProjectId,
       testplan: testPlanId,
       testPlanAssignmentPayload: {
-        executor: 'me',
+        executor: 'team',
         assignmentCriteria: 'testCase',
         assignmentMethod: 'automatic',
         assignment: {
