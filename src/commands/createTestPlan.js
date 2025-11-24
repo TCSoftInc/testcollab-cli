@@ -18,7 +18,9 @@ import {
   TestPlansApi,
   TestPlanTestCasesApi,
   TestPlansAssignmentApi,
-  Configuration
+  Configuration,
+  ProjectsApi,
+  UsersApi
 } from 'testcollab-sdk';
 
 function getDate() {
@@ -101,6 +103,8 @@ export async function createTestPlan(options) {
     }
   });
 
+  const projectsApi = new ProjectsApi(config);
+  const usersApi = new UsersApi(config);
   const testPlansApi = new TestPlansApi(config);
   const testPlanCases = new TestPlanTestCasesApi(config);
   const testPlanAssignment = new TestPlansAssignmentApi(config);
@@ -118,6 +122,32 @@ export async function createTestPlan(options) {
   }
 
   try {
+    console.log('validating project and other details...');
+    const projectResponse = await projectsApi.getProject({ id: parsedProjectId });
+    
+    const assigneeDetails = await usersApi.getUser({ 
+      company: parsedCompanyId,
+      userID: parsedAssigneeId
+    });
+    
+    if(!projectResponse || !projectResponse.id) {
+      console.error('❌ Error: Project not found');
+      process.exit(1);
+    }
+    if(!assigneeDetails || !assigneeDetails.id) {
+      console.error('❌ Error: Assignee not found');
+      process.exit(1);
+    }
+
+    // if(projectResponse.company.id !== parsedCompanyId) {
+    //   console.error('❌ Error: Project does not belong to company');
+    //   process.exit(1);
+    // }
+    if(!assigneeDetails.companies.find(company => company.id === parsedCompanyId)) {
+      console.error('❌ Error: Assignee does not belong to company');
+      process.exit(1);
+    }
+    
     console.log('Step 1: Creating a new test plan...');
     const createResponse = await testPlansApi.addTestPlan({
       testPlanPayload: {
