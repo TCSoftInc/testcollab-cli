@@ -20,7 +20,8 @@ import {
   TestPlansAssignmentApi,
   Configuration,
   ProjectsApi,
-  UsersApi
+  UsersApi,
+  TagsApi
 } from 'testcollab-sdk';
 
 function getDate() {
@@ -105,6 +106,7 @@ export async function createTestPlan(options) {
 
   const projectsApi = new ProjectsApi(config);
   const usersApi = new UsersApi(config);
+  const tagsApi = new TagsApi(config);
   const testPlansApi = new TestPlansApi(config);
   const testPlanCases = new TestPlanTestCasesApi(config);
   const testPlanAssignment = new TestPlansAssignmentApi(config);
@@ -121,33 +123,57 @@ export async function createTestPlan(options) {
     // Non-fatal; continue
   }
 
+  console.log('validating project and other details...');
   try {
-    console.log('validating project and other details...');
     const projectResponse = await projectsApi.getProject({ id: parsedProjectId });
-    
-    const assigneeDetails = await usersApi.getUser({ 
-      company: parsedCompanyId,
-      userID: parsedAssigneeId
-    });
-    
+    // console.log('projectResponse', projectResponse);
     if(!projectResponse || !projectResponse.id) {
       console.error('❌ Error: Project not found');
       process.exit(1);
     }
-    if(!assigneeDetails || !assigneeDetails.id) {
-      console.error('❌ Error: Assignee not found');
-      process.exit(1);
-    }
-
     // if(projectResponse.company.id !== parsedCompanyId) {
     //   console.error('❌ Error: Project does not belong to company');
     //   process.exit(1);
     // }
+  } catch (e) {
+    console.error('❌ Error: Failed to validate project');
+    console.error(e);
+    process.exit(1);
+  }
+
+  try {
+    // const tagResponse = await tagsApi.getTag({ id: parsedTagId, project: parsedProjectId });
+    // console.log("tagResponse", tagResponse);
+    // if(!tagResponse || !tagResponse.id) {
+    //   console.error('❌ Error: Tag not found');
+    //   process.exit(1);
+    // }
+  } catch (e) {
+    console.error('❌ Error: Failed to validate tag');
+    console.error(e);
+    process.exit(1);
+  }
+
+  try {
+    const assigneeDetails = await usersApi.getUser({ 
+      company: parsedCompanyId,
+      userID: parsedAssigneeId
+    });
+    if(!assigneeDetails || !assigneeDetails.id) {
+      console.error('❌ Error: Assignee not found');
+      process.exit(1);
+    }
     if(!assigneeDetails.companies.find(company => company.id === parsedCompanyId)) {
       console.error('❌ Error: Assignee does not belong to company');
       process.exit(1);
     }
-    
+  } catch (e) {
+    console.error('❌ Error: Failed to validate assignee');
+    console.error(e);
+    process.exit(1);
+  }
+
+  try {
     console.log('Step 1: Creating a new test plan...');
     const createResponse = await testPlansApi.addTestPlan({
       testPlanPayload: {
@@ -165,7 +191,7 @@ export async function createTestPlan(options) {
     console.log(`Test Plan ID: ${testPlanId}`);
 
     console.log('Step 2: Adding test cases (matching CI tag) to the test plan...');
-    await testPlanCases.bulkAddTestPlanTestCases({
+    let tptcAddResult = await testPlanCases.bulkAddTestPlanTestCases({
       testPlanTestCaseBulkAddPayload: {
         testplan: testPlanId,
         testCaseCollection: {
@@ -180,6 +206,11 @@ export async function createTestPlan(options) {
         }
       }
     });
+    if(tptcAddResult && tptcAddResult.status === false) {
+      console.error('❌ Error: Failed to add test cases to the test plan');
+      console.error(tptcAddResult);
+      process.exit(1);
+    }
 
     console.log('Step 3: Assigning the test plan to a user...');
     const assignmentResponse = await testPlanAssignment.assignTestPlan({
@@ -205,6 +236,7 @@ export async function createTestPlan(options) {
     fs.writeFileSync('tmp/tc_test_plan', `TESTCOLLAB_TEST_PLAN_ID=${testPlanId}`);
     console.log('✅ Test plan created and assigned successfully.');
   } catch (error) {
+    console.error("ERROR:", error);
     // Improve error visibility if error is a Response-like object
     if (error && typeof error === 'object' && 'status' in error && 'text' in error) {
       try {
