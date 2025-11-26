@@ -182,7 +182,7 @@ export async function createTestPlan(options) {
     }
   }catch (e) {
     console.error('❌ Error: Invalid assignee or assignee does not have access to the project');
-    console.error(e);
+    // console.error(e);
     process.exit(1);
   }
 
