@@ -21,7 +21,8 @@ import {
   Configuration,
   ProjectsApi,
   UsersApi,
-  TagsApi
+  TestCasesApi,
+  ProjectUsersApi
 } from 'testcollab-sdk';
 
 function getDate() {
@@ -106,7 +107,8 @@ export async function createTestPlan(options) {
 
   const projectsApi = new ProjectsApi(config);
   const usersApi = new UsersApi(config);
-  const tagsApi = new TagsApi(config);
+  const tcApi = new TestCasesApi(config);
+  const projectUsersApi = new ProjectUsersApi(config);
   const testPlansApi = new TestPlansApi(config);
   const testPlanCases = new TestPlanTestCasesApi(config);
   const testPlanAssignment = new TestPlansAssignmentApi(config);
@@ -125,50 +127,61 @@ export async function createTestPlan(options) {
 
   console.log('validating project and other details...');
   try {
-    const projectResponse = await projectsApi.getProject({ id: parsedProjectId });
-    // console.log('projectResponse', projectResponse);
-    if(!projectResponse || !projectResponse.id) {
-      console.error('❌ Error: Project not found');
-      process.exit(1);
-    }
-    // if(projectResponse.company.id !== parsedCompanyId) {
-    //   console.error('❌ Error: Project does not belong to company');
-    //   process.exit(1);
-    // }
-  } catch (e) {
-    console.error('❌ Error: Failed to validate project');
-    console.error(e);
-    process.exit(1);
-  }
-
-  try {
-    // const tagResponse = await tagsApi.getTag({ id: parsedTagId, project: parsedProjectId });
-    // console.log("tagResponse", tagResponse);
-    // if(!tagResponse || !tagResponse.id) {
-    //   console.error('❌ Error: Tag not found');
-    //   process.exit(1);
-    // }
-  } catch (e) {
-    console.error('❌ Error: Failed to validate tag');
-    console.error(e);
-    process.exit(1);
-  }
-
-  try {
-    const assigneeDetails = await usersApi.getUser({ 
+    const projectResponse = await projectsApi.getProjects({
       company: parsedCompanyId,
-      userID: parsedAssigneeId
+      filter: JSON.stringify({
+        id: parsedProjectId
+      })
     });
-    if(!assigneeDetails || !assigneeDetails.id) {
-      console.error('❌ Error: Assignee not found');
-      process.exit(1);
-    }
-    if(!assigneeDetails.companies.find(company => company.id === parsedCompanyId)) {
-      console.error('❌ Error: Assignee does not belong to company');
+    if(!projectResponse || !projectResponse.length) {
+      console.error('❌ Error: Project not found or does not belong to the specified company');
       process.exit(1);
     }
   } catch (e) {
-    console.error('❌ Error: Failed to validate assignee');
+    console.error('❌ Error: Failed to validate project. Ensure the project ID is correct and belongs to the specified company.');
+    // console.error(e);
+    process.exit(1);
+  }
+
+  try {
+    const tagResponse = await tcApi.getTestCasesTags({
+      project: parsedProjectId,
+      filter: JSON.stringify({
+        id: parsedTagId
+      })
+    });
+    if(!tagResponse || !tagResponse.length || !tagResponse[0].id || tagResponse[0].id !== parsedTagId) {
+      console.error('❌ Error: Tag not found or tag does not belong to the project');
+      process.exit(1);
+    }
+  } catch (e) {
+    console.error('❌ Error: Invalid tag ID or tag does not belong to the project');
+    // console.error(e);
+    process.exit(1);
+  }
+
+  try{
+    let projectUsers = await projectUsersApi.getProjectUsers({
+      project: parsedProjectId,
+      limit: -1
+    });
+    if(!projectUsers || !projectUsers.length) {
+      console.error('❌ Error: Invalid assignee or assignee does not have access to the project');
+      process.exit(1);
+    }
+    let assigneeFound = false;
+    for(let i = 0; i < projectUsers.length; i++) {
+      if(projectUsers[i].user.id === parsedAssigneeId) {
+        assigneeFound = true;
+        break;
+      }
+    }
+    if(!assigneeFound) {
+      console.error('❌ Error: Invalid assignee or assignee does not have access to the project');
+      process.exit(1);
+    }
+  }catch (e) {
+    console.error('❌ Error: Invalid assignee or assignee does not have access to the project');
     console.error(e);
     process.exit(1);
   }
@@ -236,7 +249,7 @@ export async function createTestPlan(options) {
     fs.writeFileSync('tmp/tc_test_plan', `TESTCOLLAB_TEST_PLAN_ID=${testPlanId}`);
     console.log('✅ Test plan created and assigned successfully.');
   } catch (error) {
-    console.error("ERROR:", error);
+    // console.error("ERROR:", error);
     // Improve error visibility if error is a Response-like object
     if (error && typeof error === 'object' && 'status' in error && 'text' in error) {
       try {
