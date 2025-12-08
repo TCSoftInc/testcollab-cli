@@ -35,8 +35,10 @@ describe('Scenario 1: Initial Sync', () => {
   let tempDir;
   let git;
   let originalEnv;
+  let originalCwd;
 
   beforeEach(async () => {
+    originalCwd = process.cwd();
     // Setup temporary directory and Git repository
     tempDir = await createTempDir();
     git = await initGitRepo(tempDir);
@@ -65,7 +67,7 @@ describe('Scenario 1: Initial Sync', () => {
     }
     
     // Change back to original directory
-    process.chdir('/Users/abhi/Documents/projects-2025/tc-gherkin');
+    process.chdir(originalCwd);
   });
 
   test('should generate correct payload for initial sync with two feature files', async () => {
