@@ -378,11 +378,17 @@ function parseGherkinFile(content, filePath) {
         const scenario = child.scenario;
         const steps = scenario.steps || [];
         const stepsText = steps.map(step => `${step.keyword}${step.text}`).join('\n');
+        const scenarioTags = (scenario.tags || [])
+          .map(tag => (tag.name || '').trim())
+          .filter(Boolean)
+          .map(tagName => (tagName.startsWith('@') ? tagName.slice(1) : tagName));
+        const normalizedSteps = steps.map(step => `${step.keyword}${step.text}`);
         
         scenarios.push({
           hash: calculateHash(stepsText, filePath),
           title: scenario.name,
-          steps: steps.map(step => `${step.keyword}${step.text}`)
+          steps: normalizedSteps,
+          tags: scenarioTags
         });
       } else if (child.background) {
         // Background is in children, not directly on feature
@@ -525,6 +531,10 @@ function buildSyncPayload(projectId, prevCommit, headCommit, changes, resolvedId
           hash: scenario.hash,
           title: scenario.title
         };
+
+        if (scenario.tags && scenario.tags.length > 0) {
+          payloadScenario.tags = scenario.tags;
+        }
         
         // Determine prevHash robustly:
         // 1) If steps unchanged, new hash equals some old hash → use that

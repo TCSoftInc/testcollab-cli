@@ -29,7 +29,9 @@
     "@cucumber/gherkin": "^33.1.0",
     "@cucumber/messages": "^28.1.0",
     "commander": "^11.1.0",
-    "simple-git": "^3.28.0"
+    "simple-git": "^3.28.0",
+    "testcollab-cypress-plugin": "^1.0.3",
+    "testcollab-sdk": "^2.1.1-SNAPSHOT.202509242236"
   },
   "engines": {
     "node": ">=18.0.0"

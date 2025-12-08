@@ -9,8 +9,10 @@
 
 import { Command } from 'commander';
 import { featuresync } from './commands/featuresync.js';
+import { createTestPlan } from './commands/createTestPlan.js';
+import { report } from './commands/report.js';
 
-// Initialize commander
+// Initialize commanderq
 const program = new Command();
 
 program
@@ -25,6 +27,31 @@ program
   .requiredOption('--project <id>', 'TestCollab project ID')
   .option('--api-url <url>', 'TestCollab API base URL', 'https://api.testcollab.io')
   .action(featuresync);
+
+// Add createTestPlan command
+program
+  .command('createTestPlan')
+  .description('Create a new Test Plan, add CI-tagged cases, and assign it')
+  .requiredOption('--api-key <key>', 'TestCollab API key (was TESTCOLLAB_API_KEY)')
+  .requiredOption('--project <id>', 'TestCollab project ID (was TESTCOLLAB_PROJECT_ID)')
+  .requiredOption('--ci-tag-id <id>', 'CI tag ID to include cases (was TESTCOLLAB_CI_TAG_ID)')
+  .requiredOption('--assignee-id <id>', 'User ID to assign execution (was TESTCOLLAB_ASSIGNEE_ID)')
+  .requiredOption('--company-id <id>', 'Company ID (was TESTCOLLAB_COMPANY_ID)')
+  // .option('--node-env <env>', 'Node environment (was NODE_ENV)', process.env.NODE_ENV || 'production')
+  .option('--api-url <url>', 'TestCollab API base URL', 'https://api.testcollab.io')
+  .action(createTestPlan);
+
+// Add report command
+program
+  .command('report')
+  .description('Upload a Mochawesome JSON result to TestCollab and attach to a Test Plan')
+  .requiredOption('--api-key <key>', 'TestCollab API key (was TESTCOLLAB_API_KEY)')
+  .requiredOption('--project <id>', 'TestCollab project ID (was TESTCOLLAB_PROJECT_ID)')
+  .requiredOption('--company-id <id>', 'Company ID (was TESTCOLLAB_COMPANY_ID)')
+  .requiredOption('--test-plan-id <id>', 'Test Plan ID (was TESTCOLLAB_TEST_PLAN_ID)')
+  .option('--api-url <url>', 'TestCollab API base URL override')
+  .option('--mocha-json-result <path>', 'Path to mochawesome.json', './mochawesome-report/mochawesome.json')
+  .action(report);
 
 // Parse command line arguments and execute the program
 program.parse(process.argv);
