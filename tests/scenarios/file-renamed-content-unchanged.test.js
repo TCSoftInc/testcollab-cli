@@ -169,11 +169,11 @@ describe('Scenario 4: File Renamed, Content Unchanged', () => {
     const syncStateResponse = mockExistingSyncState(projectId, initialCommit);
     
     // Mock resolve-ids to return the existing suite and test case IDs using the OLD hashes
-    const suiteMapping = oldFeatureHash ? { [oldFeatureHash]: { id: 101 } } : {};
+    const suiteMapping = oldFeatureHash ? { [oldFeatureHash]: { suiteId: 101 } } : {};
     const caseMapping = {};
     if (oldScenarioHashes.length >= 2) {
-      caseMapping[oldScenarioHashes[0]] = { id: 1001 };
-      caseMapping[oldScenarioHashes[1]] = { id: 1002 };
+      caseMapping[oldScenarioHashes[0]] = { caseId: 1001 };
+      caseMapping[oldScenarioHashes[1]] = { caseId: 1002 };
     }
     
     const resolveIdsResponse = mockResolveIds(suiteMapping, caseMapping);
@@ -313,8 +313,8 @@ describe('Scenario 4: File Renamed, Content Unchanged', () => {
     mockFetch
       .mockResolvedValueOnce(mockExistingSyncState(projectId, initialCommit))
       .mockResolvedValueOnce(mockResolveIds(
-        { 'hash1': 101, 'hash2': 102 }, // Multiple feature hashes
-        { 'scenario1': 1001, 'scenario2': 1002, 'scenario3': 1003 } // Multiple scenario hashes
+        { 'hash1': { suiteId: 101 }, 'hash2': { suiteId: 102 } }, // Multiple feature hashes
+        { 'scenario1': { caseId: 1001 }, 'scenario2': { caseId: 1002 }, 'scenario3': { caseId: 1003 } } // Multiple scenario hashes
       ))
       .mockResolvedValueOnce(mockSuccessfulSync({
         storedCommit: renameCommit,

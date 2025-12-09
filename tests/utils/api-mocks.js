@@ -12,6 +12,17 @@ import { jest } from '@jest/globals';
  */
 export const mockFetch = jest.fn();
 
+// Simple helper to drop keys without pulling additional deps
+const omitKeys = (obj, keys = []) => {
+  const copy = {};
+  Object.entries(obj || {}).forEach(([k, v]) => {
+    if (!keys.includes(k)) {
+      copy[k] = v;
+    }
+  });
+  return copy;
+};
+
 /**
  * Setup fetch mocking for tests
  */
@@ -90,11 +101,44 @@ export function mockEmptyResolveIds() {
  * @returns {Object} Mock response with resolved IDs
  */
 export function mockResolveIds(suites = {}, cases = {}) {
+  // Normalise responses to match real API shape from tc-api/api/bdd/controllers/Bdd.js
+  // - suites map: { <hash>: { suiteId, title? } }
+  // - cases map:  { <hash>: { caseId, title?, suiteId? } }
+  // Helper accepts plain numbers/strings or { id } for convenience and converts to above.
+  const normaliseEntries = (entries, type) => {
+    const normalised = {};
+    Object.entries(entries || {}).forEach(([hash, value]) => {
+      if (value == null) {
+        return;
+      }
+
+      // Allow shorthand values (number/string)
+      if (typeof value === 'number' || typeof value === 'string') {
+        normalised[hash] = type === 'suite' ? { suiteId: value } : { caseId: value };
+        return;
+      }
+
+      // Allow { id } shorthand; preserve extra metadata if present
+      if (value.id && !value.suiteId && !value.caseId) {
+        const base = type === 'suite' ? { suiteId: value.id } : { caseId: value.id };
+        normalised[hash] = { ...base, ...omitKeys(value, ['id']) };
+        return;
+      }
+
+      normalised[hash] = value;
+    });
+
+    return normalised;
+  };
+
+  const normalisedSuites = normaliseEntries(suites, 'suite');
+  const normalisedCases = normaliseEntries(cases, 'case');
+
   return createApiResponse({
     success: true,
     results: {
-      suites,
-      cases
+      suites: normalisedSuites,
+      cases: normalisedCases
     }
   });
 }
