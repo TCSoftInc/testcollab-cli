@@ -29,13 +29,15 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-
+          registry-url: https://registry.npmjs.org
           cache: npm
 
       - name: Bump version
         if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'release'
         run: node scripts/bump-version.js
-
+      - name: upgrade npm
+        run: npm i -g npm@latest
+        
       - name: Install dependencies
         run: npm ci
 
@@ -48,4 +50,4 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'release'
         run: |
           unset NODE_AUTH_TOKEN
-          npm publish --provenance --access public
+          npm publish
