@@ -47,5 +47,7 @@ jobs:
       - name: Publish to npm
         if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'release'
         run: |
+          npm config list
           sed -i '/_authToken/d' "$NPM_CONFIG_USERCONFIG"
-          npm publish --provenance
+          unset NODE_AUTH_TOKEN
+          npm publish --provenance --access public
