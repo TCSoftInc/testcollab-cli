@@ -26,8 +26,10 @@
   "author": "TestCollab",
   "license": "MIT",
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.71.2",
     "@cucumber/gherkin": "^33.1.0",
     "@cucumber/messages": "^28.1.0",
+    "@google/generative-ai": "^0.24.1",
     "commander": "^11.1.0",
     "simple-git": "^3.28.0",
     "testcollab-cypress-plugin": "^1.0.3",

@@ -11,6 +11,7 @@ import { Command } from 'commander';
 import { featuresync } from './commands/featuresync.js';
 import { createTestPlan } from './commands/createTestPlan.js';
 import { report } from './commands/report.js';
+import { specgen } from './commands/specgen.js';
 
 // Initialize commanderq
 const program = new Command();
@@ -52,6 +53,18 @@ program
   .option('--api-url <url>', 'TestCollab API base URL override')
   .option('--mocha-json-result <path>', 'Path to mochawesome.json', './mochawesome-report/mochawesome.json')
   .action(report);
+
+// Add specgen command
+program
+  .command('specgen')
+  .description('Generate Gherkin `.feature` files by crawling source code with AI assistance')
+  .option('--src <path>', 'Source directory to analyze', './src')
+  .option('--out <path>', 'Output directory for generated `.feature` files', './features')
+  .option('--cache <path>', 'Cache file for discovered targets/families', '.testcollab/specgen.json')
+  .option('--model <name>', 'Anthropic model to use', 'claude-sonnet-4-5-20250929')
+  .option('--yes', 'Skip confirmation prompts', false)
+  .option('--dry-run', 'Discover and preview targets without generating files', false)
+  .action(specgen);
 
 // Parse command line arguments and execute the program
 program.parse(process.argv);
