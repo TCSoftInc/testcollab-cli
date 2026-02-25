@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="TestCollab CLI Sample JUnit">
+  <testsuite name="Authentication" tests="3" failures="1" skipped="1" time="0.62">
+    <testcase classname="Authentication.Login" name="[TC-1913] should login with valid credentials" time="0.12" />
+    <testcase classname="Authentication.Login" name="[TC-1914] should reject invalid password" time="0.43">
+      <failure message="Expected invalid password error">AssertionError: expected status 401 but got 200</failure>
+    </testcase>
+    <testcase classname="Authentication.Login" name="[TC-1915] should support SSO login" time="0.07">
+      <skipped />
+    </testcase>
+  </testsuite>
+</testsuites>

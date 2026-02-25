@@ -45,13 +45,14 @@ program
 // Add report command
 program
   .command('report')
-  .description('Upload a Mochawesome JSON result to TestCollab and attach to a Test Plan')
+  .description('Upload test results (Mochawesome JSON or JUnit XML) to TestCollab and attach to a Test Plan')
   .requiredOption('--api-key <key>', 'TestCollab API key (was TESTCOLLAB_API_KEY)')
   .requiredOption('--project <id>', 'TestCollab project ID (was TESTCOLLAB_PROJECT_ID)')
   .requiredOption('--company-id <id>', 'Company ID (was TESTCOLLAB_COMPANY_ID)')
   .requiredOption('--test-plan-id <id>', 'Test Plan ID (was TESTCOLLAB_TEST_PLAN_ID)')
   .option('--api-url <url>', 'TestCollab API base URL override')
   .option('--mocha-json-result <path>', 'Path to mochawesome.json', './mochawesome-report/mochawesome.json')
+  .option('--junit-xml-result <path>', 'Path to JUnit XML result file (takes precedence over --mocha-json-result)')
   .action(report);
 
 // Add specgen command
