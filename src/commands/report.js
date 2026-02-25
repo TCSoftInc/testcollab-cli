@@ -1066,14 +1066,22 @@ function logUploadSummary(formatLabel, summary) {
   }
 }
 
+function normalizeReportFormat(value) {
+  const format = String(value || '').trim().toLowerCase();
+  if (format === 'mochawesome' || format === 'junit') {
+    return format;
+  }
+  return '';
+}
+
 export async function report(options) {
   const {
     apiKey,
     project,
     companyId,
     testPlanId,
-    mochaJsonResult,
-    junitXmlResult,
+    format,
+    resultFile,
     apiUrl
   } = options;
 
@@ -1083,21 +1091,27 @@ export async function report(options) {
     parsedTestPlanId
   } = validateRequiredOptions({ apiKey, project, companyId, testPlanId });
 
-  const hasJUnitInput = Boolean(junitXmlResult && String(junitXmlResult).trim());
+  const normalizedFormat = normalizeReportFormat(format);
+  if (!normalizedFormat) {
+    console.error('❌ Error: --format must be either "mochawesome" or "junit"');
+    process.exit(1);
+  }
 
-  if (hasJUnitInput) {
-    const junitPathInput = String(junitXmlResult).trim();
-    const absJUnitPath = toAbsolutePath(junitPathInput);
+  if (!resultFile || !String(resultFile).trim()) {
+    console.error('❌ Error: --result-file is required');
+    process.exit(1);
+  }
 
-    if (!fs.existsSync(absJUnitPath)) {
-      console.error(`❌ Error: JUnit XML not found at: ${absJUnitPath}`);
-      console.error('   Ensure you have generated your JUnit XML report,');
-      console.error('   or provide a custom path via --junit-xml-result <path>');
-      process.exit(1);
-    }
+  const absResultPath = toAbsolutePath(String(resultFile).trim());
+  if (!fs.existsSync(absResultPath)) {
+    console.error(`❌ Error: Result file not found at: ${absResultPath}`);
+    console.error('   Ensure the result file exists and you passed a valid path via --result-file <path>');
+    process.exit(1);
+  }
 
+  if (normalizedFormat === 'junit') {
     try {
-      const junitXmlContent = fs.readFileSync(absJUnitPath, 'utf8');
+      const junitXmlContent = fs.readFileSync(absResultPath, 'utf8');
       const parsedReport = parseJUnitReport(junitXmlContent);
       const stats = parsedReport.stats;
 
@@ -1124,16 +1138,6 @@ export async function report(options) {
     }
 
     return;
-  }
-
-  const resultPath = mochaJsonResult || './mochawesome-report/mochawesome.json';
-  const absResultPath = toAbsolutePath(resultPath);
-
-  if (!fs.existsSync(absResultPath)) {
-    console.error(`❌ Error: Mochawesome JSON not found at: ${absResultPath}`);
-    console.error('   Ensure you have run your tests and generated mochawesome.json,');
-    console.error('   or provide a custom path via --mocha-json-result <path>');
-    process.exit(1);
   }
 
   try {

@@ -50,9 +50,9 @@ program
   .requiredOption('--project <id>', 'TestCollab project ID (was TESTCOLLAB_PROJECT_ID)')
   .requiredOption('--company-id <id>', 'Company ID (was TESTCOLLAB_COMPANY_ID)')
   .requiredOption('--test-plan-id <id>', 'Test Plan ID (was TESTCOLLAB_TEST_PLAN_ID)')
+  .requiredOption('--format <type>', 'Result format: mochawesome or junit')
+  .requiredOption('--result-file <path>', 'Path to test result file')
   .option('--api-url <url>', 'TestCollab API base URL override')
-  .option('--mocha-json-result <path>', 'Path to mochawesome.json', './mochawesome-report/mochawesome.json')
-  .option('--junit-xml-result <path>', 'Path to JUnit XML result file (takes precedence over --mocha-json-result)')
   .action(report);
 
 // Add specgen command

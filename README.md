@@ -324,8 +324,8 @@ node ./src/index.js createTestPlan --api-key $TESTCOLLAB_TOKEN --project 123 --c
 ### `tc report`
 
 Reads a test result file and uploads test run results for the given Test Plan.
-- `--mocha-json-result`: parses Mochawesome JSON and updates assigned executed test cases directly
-- `--junit-xml-result`: parses JUnit XML and updates assigned executed test cases directly
+- `--format mochawesome`: parses Mochawesome JSON and updates assigned executed test cases directly
+- `--format junit`: parses JUnit XML and updates assigned executed test cases directly
 
 The CLI validates token/company/project/test plan context first, then updates executed test cases directly (same flow as the TestCollab cypress reporter).
 
@@ -337,8 +337,8 @@ tc report \
   --project <project_id> \
   --company-id <company_id> \
   --test-plan-id <test_plan_id> \
-  [--mocha-json-result <path>] \
-  [--junit-xml-result <path>] \
+  --format <mochawesome|junit> \
+  --result-file <path> \
   [--api-url <url>]
 ```
 
@@ -351,9 +351,12 @@ tc report \
 
 #### Optional Options
 
-- `--mocha-json-result <path>`: Path to Mochawesome JSON (default: `./mochawesome-report/mochawesome.json`)
-- `--junit-xml-result <path>`: Path to JUnit XML file (if provided, this takes precedence over `--mocha-json-result`)
 - `--api-url <url>`: Override TestCollab API base URL if needed
+
+#### Report Input Options
+
+- `--format <mochawesome|junit>`: Format of the result file to parse
+- `--result-file <path>`: Path to the input file for the selected format
 
 For JUnit input, each `<testcase name="...">` must include a TestCollab case ID so results can be mapped. Supported patterns:
 - `[TC-123] ...`
@@ -370,11 +373,11 @@ For configuration-specific plan runs:
 #### Examples
 
 ```bash
-tc report --api-key $TESTCOLLAB_TOKEN --project 123 --company-id 100 --test-plan-id 555 --mocha-json-result ./mochawesome-report/mochawesome.json
+tc report --api-key $TESTCOLLAB_TOKEN --project 123 --company-id 100 --test-plan-id 555 --format mochawesome --result-file ./mochawesome-report/mochawesome.json
 ```
 
 ```bash
-tc report --api-key $TESTCOLLAB_TOKEN --project 123 --company-id 100 --test-plan-id 555 --junit-xml-result ./reports/junit.xml
+tc report --api-key $TESTCOLLAB_TOKEN --project 123 --company-id 100 --test-plan-id 555 --format junit --result-file ./reports/junit.xml
 ```
 
 Sample files are available in:
@@ -388,11 +391,11 @@ Sample files are available in:
 #### Run from source
 
 ```bash
-node ./src/index.js report --api-key $TESTCOLLAB_TOKEN --project 123 --company-id 100 --test-plan-id 555 --mocha-json-result ./mochawesome-report/mochawesome.json
+node ./src/index.js report --api-key $TESTCOLLAB_TOKEN --project 123 --company-id 100 --test-plan-id 555 --format mochawesome --result-file ./mochawesome-report/mochawesome.json
 ```
 
 ```bash
-node ./src/index.js report --api-key $TESTCOLLAB_TOKEN --project 123 --company-id 100 --test-plan-id 555 --junit-xml-result ./reports/junit.xml
+node ./src/index.js report --api-key $TESTCOLLAB_TOKEN --project 123 --company-id 100 --test-plan-id 555 --format junit --result-file ./reports/junit.xml
 ```
 
 
