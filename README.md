@@ -11,17 +11,18 @@ npm install -g testcollab-cli
 Upload test results to TestCollab from your CI pipeline in two steps:
 
 ```bash
+export TESTCOLLAB_TOKEN=your_token_here
+
 # Step 1: Create a test plan with your CI-tagged cases
-tc createTestPlan --api-key $TOKEN --project 123 --ci-tag-id 456 --assignee-id 789
+tc createTestPlan --project 123 --ci-tag-id 456 --assignee-id 789
 
 # Step 2: After running your tests, upload results
-tc report --api-key $TOKEN --project 123 --test-plan-id 555 --format junit --result-file ./results.xml
+tc report --project 123 --test-plan-id 555 --format junit --result-file ./results.xml
 ```
 
 Or sync BDD feature files to TestCollab:
 
 ```bash
-export TESTCOLLAB_TOKEN=your_token_here
 tc sync --project 123
 ```
 
@@ -43,19 +44,19 @@ Creates a test plan, adds all test cases matching a CI tag, and assigns it to a 
 
 ```bash
 tc createTestPlan \
-  --api-key <key> \
   --project <id> \
   --ci-tag-id <id> \
   --assignee-id <id> \
+  [--api-key <key>] \
   [--api-url <url>]
 ```
 
 | Option | Required | Description |
 |--------|----------|-------------|
-| `--api-key <key>` | Yes | TestCollab API key |
 | `--project <id>` | Yes | Project ID |
 | `--ci-tag-id <id>` | Yes | Tag ID — test cases with this tag are added to the plan |
 | `--assignee-id <id>` | Yes | User ID to assign the plan execution to |
+| `--api-key <key>` | No | TestCollab API key (or set `TESTCOLLAB_TOKEN` env var) |
 | `--api-url <url>` | No | API base URL (default: `https://api.testcollab.io`). Use `https://api-eu.testcollab.io` for EU region. |
 
 **Output:** Writes the created plan ID to `tmp/tc_test_plan` as `TESTCOLLAB_TEST_PLAN_ID=<id>`. You can source this file in subsequent CI steps.
@@ -68,21 +69,21 @@ Parses a test result file (Mochawesome JSON or JUnit XML) and uploads results to
 
 ```bash
 tc report \
-  --api-key <key> \
   --project <id> \
   --test-plan-id <id> \
   --format <mochawesome|junit> \
   --result-file <path> \
+  [--api-key <key>] \
   [--api-url <url>]
 ```
 
 | Option | Required | Description |
 |--------|----------|-------------|
-| `--api-key <key>` | Yes | TestCollab API key |
 | `--project <id>` | Yes | Project ID |
 | `--test-plan-id <id>` | Yes | Test plan to attach results to |
 | `--format <type>` | Yes | `mochawesome` or `junit` |
 | `--result-file <path>` | Yes | Path to the result file |
+| `--api-key <key>` | No | TestCollab API key (or set `TESTCOLLAB_TOKEN` env var) |
 | `--api-url <url>` | No | API base URL override (default: `https://api.testcollab.io`). Use `https://api-eu.testcollab.io` for EU region. |
 
 #### Mapping test cases
@@ -139,15 +140,14 @@ For detailed setup instructions per framework, see [Framework Setup Guide](docs/
 Synchronizes Gherkin `.feature` files from your Git repository with TestCollab. Features become test suites, scenarios become test cases. Designed to run in CI/CD pipelines (on push to main), but works locally too — it uses Git commit hashes to track what's already been synced.
 
 ```bash
-tc sync --project <id> [--api-url <url>]
+tc sync --project <id> [--api-key <key>] [--api-url <url>]
 ```
 
 | Option | Required | Description |
 |--------|----------|-------------|
 | `--project <id>` | Yes | TestCollab project ID |
+| `--api-key <key>` | No | TestCollab API key (or set `TESTCOLLAB_TOKEN` env var) |
 | `--api-url <url>` | No | API base URL (default: `https://api.testcollab.io`). Use `https://api-eu.testcollab.io` for EU region. |
-
-**Authentication:** Set the `TESTCOLLAB_TOKEN` environment variable.
 
 #### How it works
 
@@ -182,13 +182,10 @@ Fork [testcollab-bdd-demo](https://github.com/TCSoftInc/testcollab-bdd-demo) and
 
 ## Authentication
 
-The CLI uses two authentication mechanisms depending on the command:
+All commands authenticate the same way. Provide your API key using **either** method:
 
-| Command | Auth method |
-|---------|------------|
-| `tc sync` | `TESTCOLLAB_TOKEN` environment variable |
-| `tc createTestPlan` | `--api-key` flag |
-| `tc report` | `--api-key` flag |
+1. **`--api-key` flag** (takes precedence)
+2. **`TESTCOLLAB_TOKEN` environment variable** (recommended for CI/CD)
 
 **Getting your API token:** Go to TestCollab → Account Settings → API Tokens.
 
@@ -226,6 +223,8 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      TESTCOLLAB_TOKEN: ${{ secrets.TESTCOLLAB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
@@ -238,7 +237,6 @@ jobs:
       # Step 1: Create test plan with CI-tagged cases
       - run: |
           tc createTestPlan \
-            --api-key ${{ secrets.TESTCOLLAB_TOKEN }} \
             --project ${{ secrets.TC_PROJECT_ID }} \
             --ci-tag-id ${{ secrets.TC_CI_TAG_ID }} \
             --assignee-id ${{ secrets.TC_ASSIGNEE_ID }}
@@ -252,7 +250,6 @@ jobs:
       # Step 4: Upload results to TestCollab
       - run: |
           tc report \
-            --api-key ${{ secrets.TESTCOLLAB_TOKEN }} \
             --project ${{ secrets.TC_PROJECT_ID }} \
             --test-plan-id $TESTCOLLAB_TEST_PLAN_ID \
             --format mochawesome \
@@ -299,13 +296,15 @@ jobs:
 test-and-report:
   stage: test
   image: node:22
+  variables:
+    TESTCOLLAB_TOKEN: $TESTCOLLAB_TOKEN
   before_script:
     - npm install -g testcollab-cli && npm ci
   script:
-    - tc createTestPlan --api-key $TESTCOLLAB_TOKEN --project $TC_PROJECT_ID --ci-tag-id $TC_CI_TAG_ID --assignee-id $TC_ASSIGNEE_ID
+    - tc createTestPlan --project $TC_PROJECT_ID --ci-tag-id $TC_CI_TAG_ID --assignee-id $TC_ASSIGNEE_ID
     - export $(cat tmp/tc_test_plan)
     - npx cypress run --reporter mochawesome
-    - tc report --api-key $TESTCOLLAB_TOKEN --project $TC_PROJECT_ID --test-plan-id $TESTCOLLAB_TEST_PLAN_ID --format mochawesome --result-file ./mochawesome-report/mochawesome.json
+    - tc report --project $TC_PROJECT_ID --test-plan-id $TESTCOLLAB_TEST_PLAN_ID --format mochawesome --result-file ./mochawesome-report/mochawesome.json
 ```
 
 #### Sync feature files

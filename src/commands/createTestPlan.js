@@ -36,12 +36,14 @@ function getDate() {
 
 export async function createTestPlan(options) {
   const {
-    apiKey,
     project,
     ciTagId,
     assigneeId,
     apiUrl
   } = options;
+
+  // Resolve API key: --api-key flag takes precedence, then TESTCOLLAB_TOKEN env var
+  const apiKey = options.apiKey || process.env.TESTCOLLAB_TOKEN;
 
   // Normalize/Default API base URL
   const effectiveApiUrl = (apiUrl && String(apiUrl).trim())
@@ -50,19 +52,20 @@ export async function createTestPlan(options) {
 
   // Validate required inputs
   if (!apiKey) {
-    console.error('❌ Error: --api-key is required (was TESTCOLLAB_API_KEY)');
+    console.error('❌ Error: No API key provided');
+    console.error('   Pass --api-key <key> or set the TESTCOLLAB_TOKEN environment variable.');
     process.exit(1);
   }
   if (!project) {
-    console.error('❌ Error: --project is required (was TESTCOLLAB_PROJECT_ID)');
+    console.error('❌ Error: --project is required');
     process.exit(1);
   }
   if (!ciTagId) {
-    console.error('❌ Error: --ci-tag-id is required (was TESTCOLLAB_CI_TAG_ID)');
+    console.error('❌ Error: --ci-tag-id is required');
     process.exit(1);
   }
   if (!assigneeId) {
-    console.error('❌ Error: --assignee-id is required (was TESTCOLLAB_ASSIGNEE_ID)');
+    console.error('❌ Error: --assignee-id is required');
     process.exit(1);
   }
 

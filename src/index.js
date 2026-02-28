@@ -25,6 +25,7 @@ program
 program
   .command('sync')
   .description('Synchronize Gherkin feature files with TestCollab using Git')
+  .option('--api-key <key>', 'TestCollab API key (or set TESTCOLLAB_TOKEN env var)')
   .requiredOption('--project <id>', 'TestCollab project ID')
   .option('--api-url <url>', 'TestCollab API base URL', 'https://api.testcollab.io')
   .action(featuresync);
@@ -33,7 +34,7 @@ program
 program
   .command('createTestPlan')
   .description('Create a new Test Plan, add CI-tagged cases, and assign it')
-  .requiredOption('--api-key <key>', 'TestCollab API key')
+  .option('--api-key <key>', 'TestCollab API key (or set TESTCOLLAB_TOKEN env var)')
   .requiredOption('--project <id>', 'TestCollab project ID')
   .requiredOption('--ci-tag-id <id>', 'CI tag ID to include cases')
   .requiredOption('--assignee-id <id>', 'User ID to assign execution')
@@ -44,7 +45,7 @@ program
 program
   .command('report')
   .description('Upload test results (Mochawesome JSON or JUnit XML) to TestCollab and attach to a Test Plan')
-  .requiredOption('--api-key <key>', 'TestCollab API key')
+  .option('--api-key <key>', 'TestCollab API key (or set TESTCOLLAB_TOKEN env var)')
   .requiredOption('--project <id>', 'TestCollab project ID')
   .requiredOption('--test-plan-id <id>', 'Test Plan ID')
   .requiredOption('--format <type>', 'Result format: mochawesome or junit')

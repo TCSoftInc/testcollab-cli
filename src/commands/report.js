@@ -960,7 +960,8 @@ async function uploadUsingReporterFlow({
 
 function validateRequiredOptions({ apiKey, project, testPlanId }) {
   if (!apiKey) {
-    console.error('❌ Error: --api-key is required');
+    console.error('❌ Error: No API key provided');
+    console.error('   Pass --api-key <key> or set the TESTCOLLAB_TOKEN environment variable.');
     process.exit(1);
   }
   if (!project) {
@@ -1017,13 +1018,15 @@ function normalizeReportFormat(value) {
 
 export async function report(options) {
   const {
-    apiKey,
     project,
     testPlanId,
     format,
     resultFile,
     apiUrl
   } = options;
+
+  // Resolve API key: --api-key flag takes precedence, then TESTCOLLAB_TOKEN env var
+  const apiKey = options.apiKey || process.env.TESTCOLLAB_TOKEN;
 
   const {
     parsedProjectId,

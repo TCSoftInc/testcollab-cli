@@ -8,6 +8,8 @@ How to generate test result files compatible with `tc report` for each supported
 
 Your test names must include a TestCollab case ID (e.g., `[TC-123]`, `TC-123`, `id-123`, or `testcase-123`) so results can be matched to test cases. See the [README](../README.md#mapping-test-cases) for all supported patterns.
 
+All examples below assume you've set the `TESTCOLLAB_TOKEN` environment variable (or pass `--api-key` to each command). See [Authentication](../README.md#authentication).
+
 ---
 
 ## Cypress
@@ -38,7 +40,7 @@ module.exports = {
 
 ```bash
 npx cypress run
-tc report --api-key $TOKEN --project 123 --test-plan-id 456 \
+tc report --project 123 --test-plan-id 456 \
   --format mochawesome --result-file ./mochawesome-report/mochawesome.json
 ```
 
@@ -71,7 +73,7 @@ export default {
 **Upload:**
 
 ```bash
-tc report --api-key $TOKEN --project 123 --test-plan-id 456 \
+tc report --project 123 --test-plan-id 456 \
   --format junit --result-file ./results.xml
 ```
 
@@ -109,7 +111,7 @@ Or configure in `package.json`:
 **Upload:**
 
 ```bash
-tc report --api-key $TOKEN --project 123 --test-plan-id 456 \
+tc report --project 123 --test-plan-id 456 \
   --format junit --result-file ./reports/results.xml
 ```
 
@@ -128,7 +130,7 @@ pytest --junitxml=results.xml
 **Upload:**
 
 ```bash
-tc report --api-key $TOKEN --project 123 --test-plan-id 456 \
+tc report --project 123 --test-plan-id 456 \
   --format junit --result-file ./results.xml
 ```
 
@@ -151,7 +153,7 @@ mvn test
 **Upload:**
 
 ```bash
-tc report --api-key $TOKEN --project 123 --test-plan-id 456 \
+tc report --project 123 --test-plan-id 456 \
   --format junit --result-file ./test-output/junitreports/TEST-TestSuite.xml
 ```
 
@@ -178,7 +180,7 @@ gradle test
 **Upload:**
 
 ```bash
-tc report --api-key $TOKEN --project 123 --test-plan-id 456 \
+tc report --project 123 --test-plan-id 456 \
   --format junit --result-file ./target/surefire-reports/TEST-com.example.MyTest.xml
 ```
 
@@ -197,7 +199,7 @@ robot --xunit results.xml tests/
 **Upload:**
 
 ```bash
-tc report --api-key $TOKEN --project 123 --test-plan-id 456 \
+tc report --project 123 --test-plan-id 456 \
   --format junit --result-file ./results.xml
 ```
 
@@ -216,7 +218,7 @@ phpunit --log-junit results.xml
 **Upload:**
 
 ```bash
-tc report --api-key $TOKEN --project 123 --test-plan-id 456 \
+tc report --project 123 --test-plan-id 456 \
   --format junit --result-file ./results.xml
 ```
 
@@ -249,7 +251,7 @@ npx cucumber-js --format @cucumber/junit-xml-formatter:./reports/results.xml
 **Upload:**
 
 ```bash
-tc report --api-key $TOKEN --project 123 --test-plan-id 456 \
+tc report --project 123 --test-plan-id 456 \
   --format junit --result-file ./reports/results.xml
 ```
 
@@ -274,7 +276,7 @@ cucumber.plugin=junit:target/cucumber-reports/results.xml
 **Upload:**
 
 ```bash
-tc report --api-key $TOKEN --project 123 --test-plan-id 456 \
+tc report --project 123 --test-plan-id 456 \
   --format junit --result-file ./target/cucumber-reports/results.xml
 ```
 
@@ -306,7 +308,7 @@ exports.config = {
 **Upload:**
 
 ```bash
-tc report --api-key $TOKEN --project 123 --test-plan-id 456 \
+tc report --project 123 --test-plan-id 456 \
   --format junit --result-file ./reports/results.xml
 ```
 
@@ -331,7 +333,7 @@ npx testcafe chrome tests/ --reporter junit:results.xml
 **Upload:**
 
 ```bash
-tc report --api-key $TOKEN --project 123 --test-plan-id 456 \
+tc report --project 123 --test-plan-id 456 \
   --format junit --result-file ./results.xml
 ```
 
@@ -356,7 +358,7 @@ npx newman run collection.json --reporters cli,junit --reporter-junit-export res
 **Upload:**
 
 ```bash
-tc report --api-key $TOKEN --project 123 --test-plan-id 456 \
+tc report --project 123 --test-plan-id 456 \
   --format junit --result-file ./results.xml
 ```
 
@@ -375,7 +377,7 @@ behave --junit --junit-directory ./reports
 **Upload:**
 
 ```bash
-tc report --api-key $TOKEN --project 123 --test-plan-id 456 \
+tc report --project 123 --test-plan-id 456 \
   --format junit --result-file ./reports/TESTS-features.xml
 ```
 
@@ -400,7 +402,7 @@ go test ./... -v 2>&1 | go-junit-report > results.xml
 **Upload:**
 
 ```bash
-tc report --api-key $TOKEN --project 123 --test-plan-id 456 \
+tc report --project 123 --test-plan-id 456 \
   --format junit --result-file ./results.xml
 ```
 
@@ -420,6 +422,6 @@ Kaspresso and Kotlin test frameworks inherit from the JUnit runner, so they prod
 **Upload:**
 
 ```bash
-tc report --api-key $TOKEN --project 123 --test-plan-id 456 \
+tc report --project 123 --test-plan-id 456 \
   --format junit --result-file ./app/build/outputs/androidTest-results/TEST-results.xml
 ```
