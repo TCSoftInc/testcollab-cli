@@ -8,6 +8,60 @@ How to generate test result files compatible with `tc report` for each supported
 
 Your test names must include a TestCollab case ID (e.g., `[TC-123]`, `TC-123`, `id-123`, or `testcase-123`) so results can be matched to test cases. See the [README](../README.md#mapping-test-cases) for all supported patterns.
 
+### JUnit XML example
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="My Test Suite">
+  <testsuite name="Authentication" tests="3" failures="1" skipped="1">
+    <testcase classname="Authentication.Login" name="[TC-123] should login with valid credentials" time="0.12" />
+    <testcase classname="Authentication.Login" name="[TC-124] should reject invalid password" time="0.43">
+      <failure message="Expected 401 but got 200">AssertionError: expected status 401 but got 200</failure>
+    </testcase>
+    <testcase classname="Authentication.Login" name="[TC-125] should support SSO login" time="0.07">
+      <skipped />
+    </testcase>
+  </testsuite>
+</testsuites>
+```
+
+### Mochawesome JSON example
+
+```json
+{
+  "results": [
+    {
+      "title": "Authentication",
+      "tests": [
+        {
+          "title": "[TC-123] should login with valid credentials",
+          "fullTitle": "Authentication [TC-123] should login with valid credentials",
+          "state": "passed",
+          "pass": true,
+          "fail": false
+        },
+        {
+          "title": "[TC-124] should reject invalid password",
+          "state": "failed",
+          "pass": false,
+          "fail": true,
+          "err": { "message": "Expected 401 but got 200" }
+        },
+        {
+          "title": "[TC-125] should support SSO login",
+          "state": "pending",
+          "pass": false,
+          "fail": false,
+          "pending": true
+        }
+      ]
+    }
+  ]
+}
+```
+
+The key requirement is that each test name contains a TestCollab case ID (e.g., `[TC-123]`). The CLI extracts this ID to match results to the correct test case in your test plan.
+
 All examples below assume you've set the `TESTCOLLAB_TOKEN` environment variable (or pass `--api-key` to each command). See [Authentication](../README.md#authentication).
 
 ---
