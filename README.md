@@ -1,151 +1,144 @@
 # TestCollab CLI
 
-## Feature Sync utility for Behavior driven development (BDD)
+Command-line tools for syncing Gherkin feature files, running test plans, and uploading results to [TestCollab](https://testcollab.com).
 
-A command-line interface for TestCollab operations, providing Git-based synchronization of Gherkin feature files with TestCollab projects.
-
-## Overview
-
-This CLI tool implements a sophisticated Git-based workflow to synchronize Gherkin feature files between your local repository and TestCollab. All the feature files along with the hierarchical path they are in, are synced with TestCollab's test suite and test cases tree.
-
-## Installation
-
-### Global Installation (Recommended)
-
-```bash
+```
 npm install -g testcollab-cli
 ```
 
-After global installation, you can use the `tc` command from anywhere:
+## Quick Start
+
+Upload test results to TestCollab from your CI pipeline in two steps:
 
 ```bash
-export TESTCOLLAB_TOKEN=abcdef...
+# Step 1: Create a test plan with your CI-tagged cases
+tc createTestPlan --api-key $TOKEN --project 123 --ci-tag-id 456 --assignee-id 789
+
+# Step 2: After running your tests, upload results
+tc report --api-key $TOKEN --project 123 --test-plan-id 555 --format junit --result-file ./results.xml
+```
+
+Or sync BDD feature files to TestCollab:
+
+```bash
+export TESTCOLLAB_TOKEN=your_token_here
 tc sync --project 123
 ```
-
-### Local Installation
-
-```bash
-npm install testcollab-cli --save-dev
-```
-
-With local installation, use npx to run commands:
-
-```bash
-export TESTCOLLAB_TOKEN=abcdef...
-npx tc sync --project 123
-```
-
-## Prerequisites
-
-1. **Git Repository**: The CLI must be run from within a Git repository containing `.feature` files. Other version control systems are not supported.
-2. **Committed Changes**: The files you want to sync must be committed to Git. If you try to run sync on uncommitted changes, it will display a silent warning.
-3. **API Token**: A valid TestCollab API token with project access
-
-## Sample project
-
-You can use this repo as a sample project: https://github.com/TCSoftInc/testcollab-bdd-demo
-Fork it, and run `tc sync` to try how the sync works before integrating live project.
-
-## Authentication
-
-Set your TestCollab API token as an environment variable:
-
-### Unix/Linux/macOS:
-```bash
-export TESTCOLLAB_TOKEN=your_api_token_here
-```
-
-### Windows Command Prompt:
-```cmd
-set TESTCOLLAB_TOKEN=your_api_token_here
-```
-
-### Windows PowerShell:
-```powershell
-$env:TESTCOLLAB_TOKEN = "your_api_token_here"
-```
-
-You can obtain an API token from your TestCollab account settings.
 
 ## Commands
 
+| Command | What it does |
+|---------|-------------|
+| [`tc createTestPlan`](#tc-createtestplan) | Create a test plan and assign tagged cases |
+| [`tc report`](#tc-report) | Upload Mochawesome or JUnit results |
+| [`tc sync`](#tc-sync) | Sync `.feature` files from Git to TestCollab (designed for CI/CD, works locally too) |
+
+The most common workflow is **createTestPlan → run your tests → report** to automatically upload test results from CI/CD.
+
+---
+
+### `tc createTestPlan`
+
+Creates a test plan, adds all test cases matching a CI tag, and assigns it to a user. Designed for CI pipelines where you want to automatically create a plan before running tests.
+
+```bash
+tc createTestPlan \
+  --api-key <key> \
+  --project <id> \
+  --ci-tag-id <id> \
+  --assignee-id <id> \
+  [--api-url <url>]
+```
+
+| Option | Required | Description |
+|--------|----------|-------------|
+| `--api-key <key>` | Yes | TestCollab API key |
+| `--project <id>` | Yes | Project ID |
+| `--ci-tag-id <id>` | Yes | Tag ID — test cases with this tag are added to the plan |
+| `--assignee-id <id>` | Yes | User ID to assign the plan execution to |
+| `--api-url <url>` | No | API base URL (default: `https://api.testcollab.io`). Use `https://api-eu.testcollab.io` for EU region. |
+
+**Output:** Writes the created plan ID to `tmp/tc_test_plan` as `TESTCOLLAB_TEST_PLAN_ID=<id>`. You can source this file in subsequent CI steps.
+
+---
+
+### `tc report`
+
+Parses a test result file (Mochawesome JSON or JUnit XML) and uploads results to a TestCollab test plan.
+
+```bash
+tc report \
+  --api-key <key> \
+  --project <id> \
+  --test-plan-id <id> \
+  --format <mochawesome|junit> \
+  --result-file <path> \
+  [--api-url <url>]
+```
+
+| Option | Required | Description |
+|--------|----------|-------------|
+| `--api-key <key>` | Yes | TestCollab API key |
+| `--project <id>` | Yes | Project ID |
+| `--test-plan-id <id>` | Yes | Test plan to attach results to |
+| `--format <type>` | Yes | `mochawesome` or `junit` |
+| `--result-file <path>` | Yes | Path to the result file |
+| `--api-url <url>` | No | API base URL override (default: `https://api.testcollab.io`). Use `https://api-eu.testcollab.io` for EU region. |
+
+#### Mapping test cases
+
+Your test names must include a TestCollab case ID so results can be matched. Any of these patterns work:
+
+```
+[TC-123] Login should succeed          ← bracketed
+TC-123 Login should succeed            ← prefix
+Login should succeed id-123            ← id- prefix
+Login should succeed testcase-123      ← testcase- prefix
+```
+
+#### Configuration-specific runs
+
+If your test plan uses multiple configurations, include the config ID in your test names:
+
+- **Mochawesome:** Use `config-id-<id>` as a top-level suite title
+- **JUnit:** Include `config-id-<id>` or `config-<id>` in the test case name or classname
+
+#### Sample files
+
+See `samples/reports/` for example Mochawesome and JUnit files you can reference.
+
+---
+
 ### `tc sync`
 
-Synchronizes Gherkin feature files from your Git repository with TestCollab using intelligent diff analysis.
-
-#### Syntax
+Synchronizes Gherkin `.feature` files from your Git repository with TestCollab. Features become test suites, scenarios become test cases. Designed to run in CI/CD pipelines (on push to main), but works locally too — it uses Git commit hashes to track what's already been synced.
 
 ```bash
-tc sync --project <project_id> [options]
+tc sync --project <id> [--api-url <url>]
 ```
 
-#### Required Options
+| Option | Required | Description |
+|--------|----------|-------------|
+| `--project <id>` | Yes | TestCollab project ID |
+| `--api-url <url>` | No | API base URL (default: `https://api.testcollab.io`). Use `https://api-eu.testcollab.io` for EU region. |
 
-- `--project <id>`: TestCollab project ID (required)
+**Authentication:** Set the `TESTCOLLAB_TOKEN` environment variable.
 
-#### Optional Options
+#### How it works
 
-- `--api-url <url>`: TestCollab API base URL (default: `https://api.testcollab.io`)
+1. Detects which `.feature` files changed since the last sync (using `git diff`)
+2. Parses the Gherkin and calculates content hashes
+3. Sends only the changes to TestCollab (creates, updates, renames, or deletes)
 
-#### Examples
+Only **committed** files are synced. Uncommitted changes are ignored (with a warning).
 
-##### Basic Sync
+#### Example output
 
-```bash
-tc sync --project 123
 ```
-
-##### Custom API URL
-
-```bash
-tc sync --project 123 --api-url https://your-testcollab.com/api
-```
-
-#### Run from source (without installing globally)
-
-From the project root:
-
-```bash
-export TESTCOLLAB_TOKEN=abcdef...
-node ./src/index.js sync --project 123
-```
-
-### Initial Sync
-
-```bash
-$ tc sync --project 123
-
-🔍 Fetching sync state from TestCollab...
-📊 Last synced commit: none (initial sync)
-📊 Current HEAD commit: a1b2c3d4
-🔍 Analyzing changes...
-📄 Found 5 change(s)
-🔧 Processing changes and calculating hashes...
-🔍 Resolving existing item IDs...
-📦 Building sync payload...
-🚀 Syncing with TestCollab...
-
-📊 Synchronization Results:
-✨ Created 3 suite(s)
-✨ Created 8 test case(s)
-
-✅ Synchronization completed successfully
-```
-
-### Subsequent Sync with Changes
-
-```bash
-$ tc sync --project 123
-
 🔍 Fetching sync state from TestCollab...
 📊 Last synced commit: a1b2c3d4
 📊 Current HEAD commit: e5f6g7h8
-🔍 Analyzing changes...
 📄 Found 3 change(s)
-🔧 Processing changes and calculating hashes...
-🔍 Resolving existing item IDs...
-📦 Building sync payload...
 🚀 Syncing with TestCollab...
 
 📊 Synchronization Results:
@@ -156,55 +149,94 @@ $ tc sync --project 123
 ✅ Synchronization completed successfully
 ```
 
-### No Changes
+#### Try it with a sample project
+
+Fork [testcollab-bdd-demo](https://github.com/TCSoftInc/testcollab-bdd-demo) and run `tc sync` to see how it works before integrating with your own project.
+
+---
+
+## Authentication
+
+The CLI uses two authentication mechanisms depending on the command:
+
+| Command | Auth method |
+|---------|------------|
+| `tc sync` | `TESTCOLLAB_TOKEN` environment variable |
+| `tc createTestPlan` | `--api-key` flag |
+| `tc report` | `--api-key` flag |
+
+**Getting your API token:** Go to TestCollab → Account Settings → API Tokens.
+
+**EU region:** If your TestCollab account is hosted in the EU, pass `--api-url https://api-eu.testcollab.io` to all commands.
+
+### Setting the token
 
 ```bash
-$ tc sync --project 123
+# macOS / Linux
+export TESTCOLLAB_TOKEN=your_token_here
 
-🔍 Fetching sync state from TestCollab...
-📊 Last synced commit: e5f6g7h8
-📊 Current HEAD commit: e5f6g7h8
-✅ Already up to date - no sync needed
+# Windows (Command Prompt)
+set TESTCOLLAB_TOKEN=your_token_here
+
+# Windows (PowerShell)
+$env:TESTCOLLAB_TOKEN = "your_token_here"
 ```
 
-## Error Handling
-
-### Common Errors
-
-#### Missing API Token
-```bash
-❌ Error: TESTCOLLAB_TOKEN environment variable is not set
-   Please set your TestCollab API token as an environment variable.
-   Example: export TESTCOLLAB_TOKEN=your_api_token_here
-```
-
-#### Not in Git Repository
-```bash
-❌ Error: Not in a Git repository
-   Please run this command from within a Git repository.
-```
-
-#### API Connection Issues
-```bash
-❌ Error: Failed to connect to TestCollab API: Connection refused
-```
-
-#### Invalid Project ID
-```bash
-❌ Error: Failed to fetch sync state: 404 Not Found
-```
-
-## Best Practices
-
-1. **Commit Before Syncing**: Always commit your `.feature` files before running sync
-2. **Regular Syncing**: Sync frequently to avoid large change sets, we recommend integrating with CI so all feature files are automatically synced.
-3. **Meaningful Commit Messages**: Use clear commit messages as they help track sync history
-4. **Test in Development**: Test the sync in a development project before using in production
-5. **Branch Strategy**: Consider your Git branching strategy - sync from the branch that represents your test suite
+---
 
 ## CI/CD Integration
 
+The most common use case is uploading test results from CI: create a test plan, run your tests, then report results back to TestCollab.
+
 ### GitHub Actions
+
+#### Upload test results (create plan + run tests + report)
+
+```yaml
+name: Test Pipeline
+on:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - run: npm install -g testcollab-cli && npm ci
+
+      # Step 1: Create test plan with CI-tagged cases
+      - run: |
+          tc createTestPlan \
+            --api-key ${{ secrets.TESTCOLLAB_TOKEN }} \
+            --project ${{ secrets.TC_PROJECT_ID }} \
+            --ci-tag-id ${{ secrets.TC_CI_TAG_ID }} \
+            --assignee-id ${{ secrets.TC_ASSIGNEE_ID }}
+
+      # Step 2: Read the created test plan ID
+      - run: cat tmp/tc_test_plan >> $GITHUB_ENV
+
+      # Step 3: Run your tests (example: Cypress)
+      - run: npx cypress run --reporter mochawesome
+
+      # Step 4: Upload results to TestCollab
+      - run: |
+          tc report \
+            --api-key ${{ secrets.TESTCOLLAB_TOKEN }} \
+            --project ${{ secrets.TC_PROJECT_ID }} \
+            --test-plan-id $TESTCOLLAB_TEST_PLAN_ID \
+            --format mochawesome \
+            --result-file ./mochawesome-report/mochawesome.json
+```
+
+#### Sync feature files (on .feature file changes)
+
+If you use BDD and want to keep TestCollab in sync with your `.feature` files:
 
 ```yaml
 name: Sync Feature Files
@@ -217,31 +249,50 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Important: fetch full history
-      
-      - uses: actions/setup-node@v3
+          fetch-depth: 0  # Full history required for accurate diffs
+
+      - uses: actions/setup-node@v4
         with:
-          node-version: '18'
-      
+          node-version: '22'
+
       - run: npm install -g testcollab-cli
-      
-      - run: tc sync --project ${{ secrets.TESTCOLLAB_PROJECT_ID }}
+
+      - run: tc sync --project ${{ secrets.TC_PROJECT_ID }}
         env:
           TESTCOLLAB_TOKEN: ${{ secrets.TESTCOLLAB_TOKEN }}
 ```
 
+> **Important:** `tc sync` requires `fetch-depth: 0` so it can compute accurate diffs against the last synced commit.
+
 ### GitLab CI
+
+#### Upload test results
+
+```yaml
+test-and-report:
+  stage: test
+  image: node:22
+  before_script:
+    - npm install -g testcollab-cli && npm ci
+  script:
+    - tc createTestPlan --api-key $TESTCOLLAB_TOKEN --project $TC_PROJECT_ID --ci-tag-id $TC_CI_TAG_ID --assignee-id $TC_ASSIGNEE_ID
+    - export $(cat tmp/tc_test_plan)
+    - npx cypress run --reporter mochawesome
+    - tc report --api-key $TESTCOLLAB_TOKEN --project $TC_PROJECT_ID --test-plan-id $TESTCOLLAB_TEST_PLAN_ID --format mochawesome --result-file ./mochawesome-report/mochawesome.json
+```
+
+#### Sync feature files
 
 ```yaml
 sync-features:
   stage: test
-  image: node:18
+  image: node:22
   before_script:
     - npm install -g testcollab-cli
   script:
-    - tc sync --project $TESTCOLLAB_PROJECT_ID
+    - tc sync --project $TC_PROJECT_ID
   variables:
     TESTCOLLAB_TOKEN: $TESTCOLLAB_TOKEN
   only:
@@ -249,189 +300,55 @@ sync-features:
       - "**/*.feature"
 ```
 
+---
+
 ## Troubleshooting
 
-### Sync Conflicts
+### Common errors
 
-If you see a `409` error, it means another sync has occurred since your last sync:
+| Error | Cause | Fix |
+|-------|-------|-----|
+| `TESTCOLLAB_TOKEN environment variable is not set` | Missing token | Set the env var (see [Authentication](#authentication)) |
+| `Not in a Git repository` | CLI run outside a Git repo | Run from inside a Git repository |
+| `Failed to fetch sync state: 404` | Wrong project ID | Check the project ID in TestCollab |
+| `409 Conflict` | Repo state changed since last sync | `git pull` and retry |
+| `Could not process features/x.feature` | Gherkin syntax error | Fix the `.feature` file syntax |
 
-```bash
-❌ Error: Sync failed: 409 Conflict - Repository state has changed
-```
+### Tips
 
-**Solution**: Pull the latest changes and try again:
-```bash
-git pull origin main
-tc sync --project 123
-```
-
-### Parser Errors
-
-If Gherkin files have syntax errors:
-
-```bash
-⚠️  Warning: Could not process features/login.feature: Unexpected token
-```
-
-**Solution**: Fix the Gherkin syntax errors and commit the changes.
+- **Commit before syncing** — Only committed `.feature` files are synced
+- **Sync often** — Smaller changesets are easier to review
+- **Use CI** — Automate sync on push so your test cases are always current
+- **Test first** — Try sync on a dev project before pointing at production
+- **Large repos** — The CLI only processes changed files, so performance scales with changes, not repo size. Keep individual syncs under 6MB.
 
 ---
 
-### `tc createTestPlan`
-
-Creates a new Test Plan in the given project, adds all test cases that have the specified CI tag, and assigns it to a user.
-
-#### Syntax
-
-```bash
-tc createTestPlan \
-  --api-key <key> \
-  --project <project_id> \
-  --ci-tag-id <tag_id> \
-  --assignee-id <user_id> \
-  --company-id <company_id> \
-  [--api-url <url>]
-```
-
-#### Required Options
-
-- `--api-key <key>`: TestCollab API key
-- `--project <id>`: Project ID
-- `--ci-tag-id <id>`: Tag ID used to select cases to include
-- `--assignee-id <id>`: User ID to assign the plan's execution
-- `--company-id <id>`: Company ID
-
-#### Optional Options
-
-- `--api-url <url>`: TestCollab API base URL (default: `https://api.testcollab.io`)
-
-#### Examples
-
-```bash
-tc createTestPlan --api-key $TESTCOLLAB_TOKEN --project 123 --ci-tag-id 456 --assignee-id 789 --company-id 100
-```
-
-This command writes the created plan id to `tmp/tc_test_plan` as `TESTCOLLAB_TEST_PLAN_ID=<id>`.
-
-#### Run from source
-
-```bash
-node ./src/index.js createTestPlan --api-key $TESTCOLLAB_TOKEN --project 123 --ci-tag-id 456 --assignee-id 789 --company-id 100
-```
-
----
-
-### `tc report`
-
-Reads a test result file and uploads test run results for the given Test Plan.
-- `--format mochawesome`: parses Mochawesome JSON and updates assigned executed test cases directly
-- `--format junit`: parses JUnit XML and updates assigned executed test cases directly
-
-The CLI validates token/company/project/test plan context first, then updates executed test cases directly (same flow as the TestCollab cypress reporter).
-
-#### Syntax
-
-```bash
-tc report \
-  --api-key <key> \
-  --project <project_id> \
-  --company-id <company_id> \
-  --test-plan-id <test_plan_id> \
-  --format <mochawesome|junit> \
-  --result-file <path> \
-  [--api-url <url>]
-```
-
-#### Required Options
-
-- `--api-key <key>`: TestCollab API key
-- `--project <id>`: Project ID
-- `--company-id <id>`: Company ID
-- `--test-plan-id <id>`: Test Plan ID to attach results
-
-#### Optional Options
-
-- `--api-url <url>`: Override TestCollab API base URL if needed
-
-#### Report Input Options
-
-- `--format <mochawesome|junit>`: Format of the result file to parse
-- `--result-file <path>`: Path to the input file for the selected format
-
-For JUnit input, each `<testcase name="...">` must include a TestCollab case ID so results can be mapped. Supported patterns:
-- `[TC-123] ...`
-- `... TC-123 ...`
-- `... id-123 ...`
-- `... testcase-123 ...`
-
-For Mochawesome input, each test should also include a TestCollab case ID in `title` or `fullTitle` using one of the same patterns.
-
-For configuration-specific plan runs:
-- Mochawesome: top-level suite titles should be `config-id-<id>`
-- JUnit: include `config-id-<id>` (or `config-<id>`) in testcase `name` or `classname`
-
-#### Examples
-
-```bash
-tc report --api-key $TESTCOLLAB_TOKEN --project 123 --company-id 100 --test-plan-id 555 --format mochawesome --result-file ./mochawesome-report/mochawesome.json
-```
-
-```bash
-tc report --api-key $TESTCOLLAB_TOKEN --project 123 --company-id 100 --test-plan-id 555 --format junit --result-file ./reports/junit.xml
-```
-
-Sample files are available in:
-- `samples/reports/mochawesome.json`
-- `samples/reports/junit.xml`
-- `samples/reports/junit-tagged.xml`
-- `samples/reports/junit-multi-suite.xml`
-- `samples/reports/junit-entities.xml`
-- `samples/reports/junit-short-tags.xml`
-
-#### Run from source
-
-```bash
-node ./src/index.js report --api-key $TESTCOLLAB_TOKEN --project 123 --company-id 100 --test-plan-id 555 --format mochawesome --result-file ./mochawesome-report/mochawesome.json
-```
-
-```bash
-node ./src/index.js report --api-key $TESTCOLLAB_TOKEN --project 123 --company-id 100 --test-plan-id 555 --format junit --result-file ./reports/junit.xml
-```
-
-
-### Large Repositories
-
-For very large repositories:
-- The CLI only processes changed files, so performance scales with the number of changes, not repository size
-- Consider breaking large feature sets into smaller, logical groups
-- Monitor payload size - keep individual syncs under 6MB
-
-## Development
-
-### Requirements
+## Requirements
 
 - Node.js 18.0.0 or higher
 - Git 2.0 or higher
-- Access to a TestCollab instance
 
-### Local Development
+## Installation options
 
 ```bash
-git clone <repository>
-cd testcollab-cli
-npm install
-npm link  # Makes 'tc' command available globally
+# Global (recommended)
+npm install -g testcollab-cli
+tc sync --project 123
+
+# Local (per-project)
+npm install testcollab-cli --save-dev
+npx tc sync --project 123
 ```
 
-## Support
+## Links
 
-For issues and questions:
-
-- GitHub Issues: [Report a bug or request a feature](https://github.com/TCSoftInc/testcollab-cli/issues)
-- Documentation: [TestCollab Documentation](https://help.testcollab.com)
-- Support: support@testcollab.com
-- Test Collab: [TestCollab website](https://testcollab.com)
+- [TestCollab](https://testcollab.com)
+- [Documentation](https://help.testcollab.com)
+- [Sample BDD project](https://github.com/TCSoftInc/testcollab-bdd-demo)
+- [Report a bug](https://github.com/TCSoftInc/testcollab-cli/issues)
+- [Support](mailto:support@testcollab.com)
 
 ## License
 
-MIT License - see the LICENSE file for details.
+MIT

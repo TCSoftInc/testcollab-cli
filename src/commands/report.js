@@ -511,14 +511,12 @@ function encodeComment(value) {
 }
 
 class TcApiClient {
-  constructor({ accessToken, companyId, projectId, testPlanId, baseApiUrl }) {
+  constructor({ accessToken, projectId, testPlanId, baseApiUrl }) {
     this.accessToken = String(accessToken);
-    this.companyId = Number(companyId);
     this.projectId = Number(projectId);
     this.testPlanId = Number(testPlanId);
     this.baseApiUrl = getBaseApiUrl(baseApiUrl);
 
-    this.company = null;
     this.project = null;
     this.user = null;
     this.testPlan = null;
@@ -609,24 +607,6 @@ class TcApiClient {
       const resources = await this.request('/users/me');
       if (resources && resources.id) {
         this.user = resources;
-        return resources;
-      }
-    } catch {
-      return null;
-    }
-
-    return null;
-  }
-
-  async getCompanyInfo() {
-    if (this.company && this.company.id) {
-      return this.company;
-    }
-
-    try {
-      const resources = await this.request(`/companies/${this.companyId}`);
-      if (resources && resources.id) {
-        this.company = resources;
         return resources;
       }
     } catch {
@@ -847,7 +827,6 @@ function buildUpdatePayload({ execCase, projectId, testPlanId, runRecord, config
 
 async function uploadUsingReporterFlow({
   apiKey,
-  companyId,
   projectId,
   testPlanId,
   apiUrl,
@@ -857,7 +836,6 @@ async function uploadUsingReporterFlow({
 }) {
   const tcApiInstance = new TcApiClient({
     accessToken: apiKey,
-    companyId,
     projectId,
     testPlanId,
     baseApiUrl: apiUrl
@@ -868,36 +846,9 @@ async function uploadUsingReporterFlow({
     throw new Error('Access token validation failed.');
   }
 
-  const companyData = await tcApiInstance.getCompanyInfo();
-  if (!companyData || !companyData.id) {
-    throw new Error('Company could not be fetched.');
-  }
-
-  const userData = await tcApiInstance.getUserInfo();
-  if (!userData || !userData.id) {
-    throw new Error('User could not be fetched.');
-  }
-
   const projectData = await tcApiInstance.getProjectInfo();
   if (!projectData || !projectData.id) {
-    throw new Error('Project could not be fetched.');
-  }
-
-  if (
-    projectData.company &&
-    projectData.company.id &&
-    String(projectData.company.id) !== String(companyData.id)
-  ) {
-    throw new Error('Project does not belong to company.');
-  }
-
-  const userCompany =
-    Array.isArray(userData.companies)
-      ? userData.companies.find((userComp) => userComp && userComp.id && String(userComp.id) === String(companyData.id))
-      : null;
-
-  if (!userCompany) {
-    throw new Error('User does not belong to company.');
+    throw new Error('Project could not be fetched. Ensure the project ID is correct and you have access.');
   }
 
   const testPlanData = await tcApiInstance.getTestplanInfo();
@@ -1007,34 +958,25 @@ async function uploadUsingReporterFlow({
   };
 }
 
-function validateRequiredOptions({ apiKey, project, companyId, testPlanId }) {
+function validateRequiredOptions({ apiKey, project, testPlanId }) {
   if (!apiKey) {
-    console.error('❌ Error: --api-key is required (was TESTCOLLAB_API_KEY)');
+    console.error('❌ Error: --api-key is required');
     process.exit(1);
   }
   if (!project) {
-    console.error('❌ Error: --project is required (was TESTCOLLAB_PROJECT_ID)');
-    process.exit(1);
-  }
-  if (!companyId) {
-    console.error('❌ Error: --company-id is required (was TESTCOLLAB_COMPANY_ID)');
+    console.error('❌ Error: --project is required');
     process.exit(1);
   }
   if (!testPlanId) {
-    console.error('❌ Error: --test-plan-id is required (was TESTCOLLAB_TEST_PLAN_ID)');
+    console.error('❌ Error: --test-plan-id is required');
     process.exit(1);
   }
 
   const parsedProjectId = Number(project);
-  const parsedCompanyId = Number(companyId);
   const parsedTestPlanId = Number(testPlanId);
 
   if (Number.isNaN(parsedProjectId)) {
     console.error('❌ Error: --project must be a number');
-    process.exit(1);
-  }
-  if (Number.isNaN(parsedCompanyId)) {
-    console.error('❌ Error: --company-id must be a number');
     process.exit(1);
   }
   if (Number.isNaN(parsedTestPlanId)) {
@@ -1044,7 +986,6 @@ function validateRequiredOptions({ apiKey, project, companyId, testPlanId }) {
 
   return {
     parsedProjectId,
-    parsedCompanyId,
     parsedTestPlanId
   };
 }
@@ -1078,7 +1019,6 @@ export async function report(options) {
   const {
     apiKey,
     project,
-    companyId,
     testPlanId,
     format,
     resultFile,
@@ -1087,9 +1027,8 @@ export async function report(options) {
 
   const {
     parsedProjectId,
-    parsedCompanyId,
     parsedTestPlanId
-  } = validateRequiredOptions({ apiKey, project, companyId, testPlanId });
+  } = validateRequiredOptions({ apiKey, project, testPlanId });
 
   const normalizedFormat = normalizeReportFormat(format);
   if (!normalizedFormat) {
@@ -1122,7 +1061,6 @@ export async function report(options) {
       console.log('🚀 Uploading JUnit test run result to TestCollab...');
       const summary = await uploadUsingReporterFlow({
         apiKey: String(apiKey),
-        companyId: parsedCompanyId,
         projectId: parsedProjectId,
         testPlanId: parsedTestPlanId,
         apiUrl,
@@ -1152,7 +1090,6 @@ export async function report(options) {
     console.log('🚀 Uploading Mochawesome test run result to TestCollab...');
     const summary = await uploadUsingReporterFlow({
       apiKey: String(apiKey),
-      companyId: parsedCompanyId,
       projectId: parsedProjectId,
       testPlanId: parsedTestPlanId,
       apiUrl,

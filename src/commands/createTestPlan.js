@@ -4,12 +4,11 @@
  * Creates a Test Plan in TestCollab, adds CI-tagged test cases,
  * and assigns the plan to a user.
  *
- * Options map from previous env vars:
- * - --api-key        (TESTCOLLAB_API_KEY)
- * - --project        (TESTCOLLAB_PROJECT_ID)
- * - --ci-tag-id      (TESTCOLLAB_CI_TAG_ID)
- * - --assignee-id    (TESTCOLLAB_ASSIGNEE_ID)
- * - --company-id     (TESTCOLLAB_COMPANY_ID) [accepted, not required]
+ * Options:
+ * - --api-key        API token
+ * - --project        Project ID
+ * - --ci-tag-id      Tag ID to select test cases
+ * - --assignee-id    User ID to assign the plan
  * - --api-url        (defaults to https://api.testcollab.io)
  */
 
@@ -41,14 +40,8 @@ export async function createTestPlan(options) {
     project,
     ciTagId,
     assigneeId,
-    companyId,
-    // nodeEnv,
     apiUrl
   } = options;
-  // // Apply node env if provided
-  // if (nodeEnv) {
-  //   process.env.NODE_ENV = nodeEnv;
-  // }
 
   // Normalize/Default API base URL
   const effectiveApiUrl = (apiUrl && String(apiUrl).trim())
@@ -76,7 +69,6 @@ export async function createTestPlan(options) {
   const parsedProjectId = Number(project);
   const parsedTagId = Number(ciTagId);
   const parsedAssigneeId = Number(assigneeId);
-  const parsedCompanyId = Number(companyId);
 
   if (Number.isNaN(parsedProjectId)) {
     console.error('❌ Error: --project must be a number');
@@ -88,10 +80,6 @@ export async function createTestPlan(options) {
   }
   if (Number.isNaN(parsedAssigneeId)) {
     console.error('❌ Error: --assignee-id must be a number');
-    process.exit(1);
-  }
-  if (Number.isNaN(parsedCompanyId)) {
-    console.error('❌ Error: --company-id must be a number');
     process.exit(1);
   }
 
@@ -128,17 +116,16 @@ export async function createTestPlan(options) {
   console.log('validating project and other details...');
   try {
     const projectResponse = await projectsApi.getProjects({
-      company: parsedCompanyId,
       filter: JSON.stringify({
         id: parsedProjectId
       })
     });
     if(!projectResponse || !projectResponse.length) {
-      console.error('❌ Error: Project not found or does not belong to the specified company');
+      console.error('❌ Error: Project not found. Ensure you have access to this project.');
       process.exit(1);
     }
   } catch (e) {
-    console.error('❌ Error: Failed to validate project. Ensure the project ID is correct and belongs to the specified company.');
+    console.error('❌ Error: Failed to validate project. Ensure the project ID is correct and you have access.');
     // console.error(e);
     process.exit(1);
   }
