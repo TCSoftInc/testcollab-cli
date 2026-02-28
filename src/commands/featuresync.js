@@ -28,12 +28,11 @@ const DEBUG_BDD_SYNC = process.env.BDD_SYNC_DEBUG === '1';
  */
 export async function featuresync(options) {
   try {
-    // Validate environment
-    const token = process.env.TESTCOLLAB_TOKEN;
+    // Resolve API key: --api-key flag takes precedence, then TESTCOLLAB_TOKEN env var
+    const token = options.apiKey || process.env.TESTCOLLAB_TOKEN;
     if (!token) {
-      console.error('❌ Error: TESTCOLLAB_TOKEN environment variable is not set');
-      console.error('   Please set your TestCollab API token as an environment variable.');
-      console.error('   Example: export TESTCOLLAB_TOKEN=your_api_token_here');
+      console.error('❌ Error: No API key provided');
+      console.error('   Pass --api-key <key> or set the TESTCOLLAB_TOKEN environment variable.');
       process.exit(1);
     }
 

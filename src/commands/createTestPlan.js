@@ -4,12 +4,11 @@
  * Creates a Test Plan in TestCollab, adds CI-tagged test cases,
  * and assigns the plan to a user.
  *
- * Options map from previous env vars:
- * - --api-key        (TESTCOLLAB_API_KEY)
- * - --project        (TESTCOLLAB_PROJECT_ID)
- * - --ci-tag-id      (TESTCOLLAB_CI_TAG_ID)
- * - --assignee-id    (TESTCOLLAB_ASSIGNEE_ID)
- * - --company-id     (TESTCOLLAB_COMPANY_ID) [accepted, not required]
+ * Options:
+ * - --api-key        API token
+ * - --project        Project ID
+ * - --ci-tag-id      Tag ID to select test cases
+ * - --assignee-id    User ID to assign the plan
  * - --api-url        (defaults to https://api.testcollab.io)
  */
 
@@ -37,18 +36,14 @@ function getDate() {
 
 export async function createTestPlan(options) {
   const {
-    apiKey,
     project,
     ciTagId,
     assigneeId,
-    companyId,
-    // nodeEnv,
     apiUrl
   } = options;
-  // // Apply node env if provided
-  // if (nodeEnv) {
-  //   process.env.NODE_ENV = nodeEnv;
-  // }
+
+  // Resolve API key: --api-key flag takes precedence, then TESTCOLLAB_TOKEN env var
+  const apiKey = options.apiKey || process.env.TESTCOLLAB_TOKEN;
 
   // Normalize/Default API base URL
   const effectiveApiUrl = (apiUrl && String(apiUrl).trim())
@@ -57,26 +52,26 @@ export async function createTestPlan(options) {
 
   // Validate required inputs
   if (!apiKey) {
-    console.error('❌ Error: --api-key is required (was TESTCOLLAB_API_KEY)');
+    console.error('❌ Error: No API key provided');
+    console.error('   Pass --api-key <key> or set the TESTCOLLAB_TOKEN environment variable.');
     process.exit(1);
   }
   if (!project) {
-    console.error('❌ Error: --project is required (was TESTCOLLAB_PROJECT_ID)');
+    console.error('❌ Error: --project is required');
     process.exit(1);
   }
   if (!ciTagId) {
-    console.error('❌ Error: --ci-tag-id is required (was TESTCOLLAB_CI_TAG_ID)');
+    console.error('❌ Error: --ci-tag-id is required');
     process.exit(1);
   }
   if (!assigneeId) {
-    console.error('❌ Error: --assignee-id is required (was TESTCOLLAB_ASSIGNEE_ID)');
+    console.error('❌ Error: --assignee-id is required');
     process.exit(1);
   }
 
   const parsedProjectId = Number(project);
   const parsedTagId = Number(ciTagId);
   const parsedAssigneeId = Number(assigneeId);
-  const parsedCompanyId = Number(companyId);
 
   if (Number.isNaN(parsedProjectId)) {
     console.error('❌ Error: --project must be a number');
@@ -88,10 +83,6 @@ export async function createTestPlan(options) {
   }
   if (Number.isNaN(parsedAssigneeId)) {
     console.error('❌ Error: --assignee-id must be a number');
-    process.exit(1);
-  }
-  if (Number.isNaN(parsedCompanyId)) {
-    console.error('❌ Error: --company-id must be a number');
     process.exit(1);
   }
 
@@ -128,17 +119,16 @@ export async function createTestPlan(options) {
   console.log('validating project and other details...');
   try {
     const projectResponse = await projectsApi.getProjects({
-      company: parsedCompanyId,
       filter: JSON.stringify({
         id: parsedProjectId
       })
     });
     if(!projectResponse || !projectResponse.length) {
-      console.error('❌ Error: Project not found or does not belong to the specified company');
+      console.error('❌ Error: Project not found. Ensure you have access to this project.');
       process.exit(1);
     }
   } catch (e) {
-    console.error('❌ Error: Failed to validate project. Ensure the project ID is correct and belongs to the specified company.');
+    console.error('❌ Error: Failed to validate project. Ensure the project ID is correct and you have access.');
     // console.error(e);
     process.exit(1);
   }

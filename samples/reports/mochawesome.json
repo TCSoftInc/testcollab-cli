@@ -1,0 +1,110 @@
+{
+  "stats": {
+    "suites": 1,
+    "tests": 3,
+    "passes": 1,
+    "pending": 1,
+    "failures": 1,
+    "start": "2026-02-24T00:00:00.000Z",
+    "end": "2026-02-24T00:00:00.620Z",
+    "duration": 620,
+    "testsRegistered": 3,
+    "passPercent": 33.3333,
+    "pendingPercent": 33.3333,
+    "other": 0,
+    "hasOther": false,
+    "skipped": 1,
+    "hasSkipped": true
+  },
+  "results": [
+    {
+      "uuid": "suite-authentication",
+      "title": "Authentication",
+      "fullFile": "",
+      "file": "",
+      "beforeHooks": [],
+      "afterHooks": [],
+      "tests": [
+        {
+          "title": "[TC-1913] should login with valid credentials",
+          "fullTitle": "Authentication.Login [TC-1913] should login with valid credentials",
+          "timedOut": false,
+          "duration": 120,
+          "state": "passed",
+          "speed": "fast",
+          "pass": true,
+          "fail": false,
+          "pending": false,
+          "context": null,
+          "code": "",
+          "err": {},
+          "uuid": "test-auth-pass",
+          "parentUUID": "suite-authentication",
+          "isHook": false,
+          "skipped": false
+        },
+        {
+          "title": "[TC-1914] should reject invalid password",
+          "fullTitle": "Authentication.Login [TC-1914] should reject invalid password",
+          "timedOut": false,
+          "duration": 430,
+          "state": "failed",
+          "speed": "slow",
+          "pass": false,
+          "fail": true,
+          "pending": false,
+          "context": null,
+          "code": "",
+          "err": {
+            "message": "Expected invalid password error",
+            "estack": "AssertionError: expected status 401 but got 200"
+          },
+          "uuid": "test-auth-fail",
+          "parentUUID": "suite-authentication",
+          "isHook": false,
+          "skipped": false
+        },
+        {
+          "title": "[TC-1915] should support SSO login",
+          "fullTitle": "Authentication.Login [TC-1915] should support SSO login",
+          "timedOut": false,
+          "duration": 70,
+          "state": "skipped",
+          "speed": "fast",
+          "pass": false,
+          "fail": false,
+          "pending": true,
+          "context": null,
+          "code": "",
+          "err": {},
+          "uuid": "test-auth-skip",
+          "parentUUID": "suite-authentication",
+          "isHook": false,
+          "skipped": true
+        }
+      ],
+      "suites": [],
+      "passes": [
+        "test-auth-pass"
+      ],
+      "failures": [
+        "test-auth-fail"
+      ],
+      "pending": [
+        "test-auth-skip"
+      ],
+      "skipped": [
+        "test-auth-skip"
+      ],
+      "duration": 620,
+      "root": false,
+      "rootEmpty": false,
+      "_timeout": 0
+    }
+  ],
+  "meta": {
+    "source": "sample",
+    "generatedBy": "testcollab-cli",
+    "generatedAt": "2026-02-24T00:00:00.000Z"
+  }
+}

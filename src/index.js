@@ -25,6 +25,7 @@ program
 program
   .command('sync')
   .description('Synchronize Gherkin feature files with TestCollab using Git')
+  .option('--api-key <key>', 'TestCollab API key (or set TESTCOLLAB_TOKEN env var)')
   .requiredOption('--project <id>', 'TestCollab project ID')
   .option('--api-url <url>', 'TestCollab API base URL', 'https://api.testcollab.io')
   .action(featuresync);
@@ -33,25 +34,23 @@ program
 program
   .command('createTestPlan')
   .description('Create a new Test Plan, add CI-tagged cases, and assign it')
-  .requiredOption('--api-key <key>', 'TestCollab API key (was TESTCOLLAB_API_KEY)')
-  .requiredOption('--project <id>', 'TestCollab project ID (was TESTCOLLAB_PROJECT_ID)')
-  .requiredOption('--ci-tag-id <id>', 'CI tag ID to include cases (was TESTCOLLAB_CI_TAG_ID)')
-  .requiredOption('--assignee-id <id>', 'User ID to assign execution (was TESTCOLLAB_ASSIGNEE_ID)')
-  .requiredOption('--company-id <id>', 'Company ID (was TESTCOLLAB_COMPANY_ID)')
-  // .option('--node-env <env>', 'Node environment (was NODE_ENV)', process.env.NODE_ENV || 'production')
+  .option('--api-key <key>', 'TestCollab API key (or set TESTCOLLAB_TOKEN env var)')
+  .requiredOption('--project <id>', 'TestCollab project ID')
+  .requiredOption('--ci-tag-id <id>', 'CI tag ID to include cases')
+  .requiredOption('--assignee-id <id>', 'User ID to assign execution')
   .option('--api-url <url>', 'TestCollab API base URL', 'https://api.testcollab.io')
   .action(createTestPlan);
 
 // Add report command
 program
   .command('report')
-  .description('Upload a Mochawesome JSON result to TestCollab and attach to a Test Plan')
-  .requiredOption('--api-key <key>', 'TestCollab API key (was TESTCOLLAB_API_KEY)')
-  .requiredOption('--project <id>', 'TestCollab project ID (was TESTCOLLAB_PROJECT_ID)')
-  .requiredOption('--company-id <id>', 'Company ID (was TESTCOLLAB_COMPANY_ID)')
-  .requiredOption('--test-plan-id <id>', 'Test Plan ID (was TESTCOLLAB_TEST_PLAN_ID)')
-  .option('--api-url <url>', 'TestCollab API base URL override')
-  .option('--mocha-json-result <path>', 'Path to mochawesome.json', './mochawesome-report/mochawesome.json')
+  .description('Upload test results (Mochawesome JSON or JUnit XML) to TestCollab and attach to a Test Plan')
+  .option('--api-key <key>', 'TestCollab API key (or set TESTCOLLAB_TOKEN env var)')
+  .requiredOption('--project <id>', 'TestCollab project ID')
+  .requiredOption('--test-plan-id <id>', 'Test Plan ID')
+  .requiredOption('--format <type>', 'Result format: mochawesome or junit')
+  .requiredOption('--result-file <path>', 'Path to test result file')
+  .option('--api-url <url>', 'TestCollab API base URL override', 'https://api.testcollab.io')
   .action(report);
 
 // Add specgen command
