@@ -3,7 +3,7 @@
 Command-line tools for syncing Gherkin feature files, running test plans, and uploading results to [TestCollab](https://testcollab.com).
 
 ```
-npm install -g testcollab-cli
+npm install -g @testcollab/cli
 ```
 
 ## Quick Start
@@ -232,7 +232,7 @@ jobs:
         with:
           node-version: '22'
 
-      - run: npm install -g testcollab-cli && npm ci
+      - run: npm install -g @testcollab/cli && npm ci
 
       # Step 1: Create test plan with CI-tagged cases
       - run: |
@@ -279,7 +279,7 @@ jobs:
         with:
           node-version: '22'
 
-      - run: npm install -g testcollab-cli
+      - run: npm install -g @testcollab/cli
 
       - run: tc sync --project ${{ secrets.TC_PROJECT_ID }}
         env:
@@ -299,7 +299,7 @@ test-and-report:
   variables:
     TESTCOLLAB_TOKEN: $TESTCOLLAB_TOKEN
   before_script:
-    - npm install -g testcollab-cli && npm ci
+    - npm install -g @testcollab/cli && npm ci
   script:
     - tc createTestPlan --project $TC_PROJECT_ID --ci-tag-id $TC_CI_TAG_ID --assignee-id $TC_ASSIGNEE_ID
     - export $(cat tmp/tc_test_plan)
@@ -314,7 +314,7 @@ sync-features:
   stage: test
   image: node:22
   before_script:
-    - npm install -g testcollab-cli
+    - npm install -g @testcollab/cli
   script:
     - tc sync --project $TC_PROJECT_ID
   variables:
@@ -357,11 +357,11 @@ sync-features:
 
 ```bash
 # Global (recommended)
-npm install -g testcollab-cli
+npm install -g @testcollab/cli
 tc sync --project 123
 
 # Local (per-project)
-npm install testcollab-cli --save-dev
+npm install @testcollab/cli --save-dev
 npx tc sync --project 123
 ```
 

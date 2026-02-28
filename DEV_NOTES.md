@@ -2,7 +2,7 @@
 
 ## Overview
 
-The TestCollab CLI (`testcollab-cli`) is normally published as an npm package and installed globally or locally in projects. However, when working on local changes to the CLI itself, you need to run the CLI from your local development directory instead of the published package.
+The TestCollab CLI (`@testcollab/cli`) is normally published as an npm package and installed globally or locally in projects. However, when working on local changes to the CLI itself, you need to run the CLI from your local development directory instead of the published package.
 
 ## Local Development Setup
 
@@ -49,7 +49,7 @@ npm link
 tc sync --project 123
 
 # To unlink later
-npm unlink -g testcollab-cli
+npm unlink -g @testcollab/cli
 ```
 
 ### Option 3: Local Package Linking
@@ -260,7 +260,7 @@ git commit -m "Initial commit"
 
 ## Publishing vs Development
 
-- **Published package**: Users install with `npm install -g testcollab-cli` and run `tc`
+- **Published package**: Users install with `npm install -g @testcollab/cli` and run `tc`
 - **Local development**: Run with `node src/index.js` or `npm link` for global access
 
 When your changes are ready, they'll be published to npm and users will get the updated version through normal npm update processes.

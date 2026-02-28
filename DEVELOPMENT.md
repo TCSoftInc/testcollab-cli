@@ -14,7 +14,7 @@ npm install
 
 ```bash
 npm link          # creates global 'tc' symlink to your local code
-npm unlink -g testcollab-cli  # undo when done
+npm unlink -g @testcollab/cli  # undo when done
 ```
 
 ## Running locally
