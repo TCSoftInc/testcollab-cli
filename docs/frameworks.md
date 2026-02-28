@@ -8,6 +8,10 @@ How to generate test result files compatible with `tc report` for each supported
 
 Your test names must include a TestCollab case ID (e.g., `[TC-123]`, `TC-123`, `id-123`, or `testcase-123`) so results can be matched to test cases. See the [README](../README.md#mapping-test-cases) for all supported patterns.
 
+### Supported frameworks
+
+[Cypress](#cypress) | [Playwright](#playwright) | [Jest](#jest) | [Pytest](#pytest) | [TestNG](#testng) | [JUnit 4/5](#junit-45) | [Robot Framework](#robot-framework) | [PHPUnit](#phpunit) | [Cucumber.js](#cucumberjs) | [Cucumber JVM](#cucumber-jvm) | [WebDriverIO](#webdriverio) | [TestCafe](#testcafe) | [Newman (Postman)](#newman-postman) | [Behave (Python)](#behave-python) | [Go (`go test`)](#go-go-test) | [Kaspresso / Kotlin](#kaspresso--kotlin)
+
 ### JUnit XML example
 
 ```xml
