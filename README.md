@@ -107,6 +107,31 @@ If your test plan uses multiple configurations, include the config ID in your te
 
 See `samples/reports/` for example Mochawesome and JUnit files you can reference.
 
+#### Supported frameworks
+
+Any framework that can produce **Mochawesome JSON** or **JUnit XML** works with `tc report`. Here's how popular frameworks generate compatible output:
+
+| Framework | How to get compatible output | `--format` |
+|-----------|------------------------------|------------|
+| **Cypress** | `mochawesome` reporter (built-in plugin) | `mochawesome` |
+| **Playwright** | `--reporter=junit` | `junit` |
+| **Jest** | `jest-junit` package | `junit` |
+| **Pytest** | `--junitxml=results.xml` (built-in) | `junit` |
+| **TestNG** | Generates JUnit-compatible XML | `junit` |
+| **JUnit 4/5** | Native JUnit XML output | `junit` |
+| **Robot Framework** | `--xunit output.xml` | `junit` |
+| **PHPUnit** | `--log-junit results.xml` (built-in) | `junit` |
+| **Cucumber.js** | JUnit formatter plugin | `junit` |
+| **Cucumber JVM** | JUnit XML via built-in plugin | `junit` |
+| **WebDriverIO** | `@wdio/junit-reporter` | `junit` |
+| **TestCafe** | `testcafe-reporter-junit` | `junit` |
+| **Newman (Postman)** | `newman-reporter-junit` | `junit` |
+| **Behave** | `--junit` flag (built-in) | `junit` |
+| **Go (`go test`)** | `go-junit-report` | `junit` |
+| **Kaspresso / Kotlin** | JUnit XML (inherits from JUnit runner) | `junit` |
+
+For detailed setup instructions per framework, see [Framework Setup Guide](docs/frameworks.md).
+
 ---
 
 ### `tc sync`
