@@ -216,7 +216,8 @@ export function extractTestCaseIdFromTitle(title) {
 function extractTestCaseIdFromMochawesomeTest(testData) {
   const testTitle = String(testData?.title || '').trim();
   const fullTitle = String(testData?.fullTitle || '').trim();
-  return extractTestCaseIdFromTitle(testTitle) || extractTestCaseIdFromTitle(fullTitle);
+  // Prefer fullTitle because some reporters shorten `title` and keep the canonical ID in fullTitle.
+  return extractTestCaseIdFromTitle(fullTitle) || extractTestCaseIdFromTitle(testTitle);
 }
 
 function prepareMochawesomeRunRecord(testData) {
@@ -527,6 +528,7 @@ class TcApiClient {
   buildUrl(endpoint) {
     const normalized = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
     const separator = normalized.includes('?') ? '&' : '?';
+    // console.log("build url", `${this.baseApiUrl}${normalized}${separator}token=${encodeURIComponent(this.accessToken)}`);
     return `${this.baseApiUrl}${normalized}${separator}token=${encodeURIComponent(this.accessToken)}`;
   }
 
@@ -870,6 +872,11 @@ async function uploadUsingReporterFlow({
   }
 
   await tcApiInstance.getTestplanConfigs();
+
+  const userData = await tcApiInstance.getUserInfo();
+  if (!userData || !userData.id) {
+    throw new Error('User could not be fetched for this API key.');
+  }
 
   const casesAssigned = await tcApiInstance.getAssignedCases();
   console.log({ 'Total assigned cases found': Array.isArray(casesAssigned) ? casesAssigned.length : 0 });
