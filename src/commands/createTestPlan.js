@@ -118,18 +118,25 @@ export async function createTestPlan(options) {
 
   console.log('validating project and other details...');
   try {
-    const projectResponse = await projectsApi.getProjects({
-      filter: JSON.stringify({
-        id: parsedProjectId
-      })
+    const projectResponse = await projectsApi.getProject({
+      id: parsedProjectId
     });
-    if(!projectResponse || !projectResponse.length) {
+    if (!projectResponse || !projectResponse.id || projectResponse.id !== parsedProjectId) {
       console.error('❌ Error: Project not found. Ensure you have access to this project.');
       process.exit(1);
     }
   } catch (e) {
-    console.error('❌ Error: Failed to validate project. Ensure the project ID is correct and you have access.');
-    // console.error(e);
+    if (e && typeof e === 'object' && 'status' in e && 'text' in e) {
+      try {
+        const bodyText = await e.text();
+        console.error(`❌ Error: Failed to validate project (HTTP ${e.status} ${e.statusText || ''}${bodyText ? ` - ${bodyText}` : ''})`);
+      } catch {
+        console.error(`❌ Error: Failed to validate project (HTTP ${e.status} ${e.statusText || ''})`);
+      }
+    } else {
+      const message = e?.message || String(e);
+      console.error(`❌ Error: Failed to validate project (${message})`);
+    }
     process.exit(1);
   }
 
@@ -255,5 +262,4 @@ export async function createTestPlan(options) {
     process.exit(1);
   }
 }
-
 
