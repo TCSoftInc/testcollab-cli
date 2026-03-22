@@ -85,6 +85,20 @@ tc report \
 | `--result-file <path>` | Yes | Path to the result file |
 | `--api-key <key>` | No | TestCollab API key (or set `TESTCOLLAB_TOKEN` env var) |
 | `--api-url <url>` | No | API base URL override (default: `https://api.testcollab.io`). Use `https://api-eu.testcollab.io` for EU region. |
+| `--skip-missing` | No | Mark test cases in the test plan but not in the result file as **skipped** |
+
+#### `--skip-missing`
+
+By default, test cases in the test plan that don't appear in the result file are left untouched. When `--skip-missing` is passed, these unmatched cases are automatically marked as **skipped**. This is useful when your result file only contains the tests that actually ran, and you want the full test plan status to reflect that anything not executed was skipped.
+
+```bash
+tc report \
+  --project 123 \
+  --test-plan-id 555 \
+  --format junit \
+  --result-file ./results.xml \
+  --skip-missing
+```
 
 #### Mapping test cases
 

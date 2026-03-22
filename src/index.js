@@ -51,6 +51,7 @@ program
   .requiredOption('--format <type>', 'Result format: mochawesome or junit')
   .requiredOption('--result-file <path>', 'Path to test result file')
   .option('--api-url <url>', 'TestCollab API base URL override', 'https://api.testcollab.io')
+  .option('--skip-missing', 'Mark test cases in the test plan but not in the result file as skipped', false)
   .action(report);
 
 // Add specgen command

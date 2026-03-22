@@ -834,7 +834,8 @@ async function uploadUsingReporterFlow({
   apiUrl,
   hasConfig,
   resultsToUpload,
-  unresolvedIds
+  unresolvedIds,
+  skipMissing = false
 }) {
   const tcApiInstance = new TcApiClient({
     accessToken: apiKey,
@@ -883,9 +884,11 @@ async function uploadUsingReporterFlow({
 
   const unmatchedCaseIds = new Set();
   const unmatchedConfigIds = new Set();
+  const matchedExecCaseIds = new Set();
   let matched = 0;
   let updated = 0;
   let errors = 0;
+  let skippedMissing = 0;
 
   const configIds = Object.keys(resultsToUpload);
 
@@ -916,6 +919,7 @@ async function uploadUsingReporterFlow({
         }
 
         matched += 1;
+        matchedExecCaseIds.add(execCase.id);
 
         const updatePayload = buildUpdatePayload({
           execCase,
@@ -955,10 +959,54 @@ async function uploadUsingReporterFlow({
     }
   }
 
+  // --skip-missing: mark all assigned cases not present in the result file as skipped
+  if (skipMissing) {
+    const missingCases = casesAssigned.filter(
+      (assignedCase) => assignedCase && assignedCase.id && !matchedExecCaseIds.has(assignedCase.id)
+    );
+
+    if (missingCases.length) {
+      console.log(`\n⏭️  --skip-missing: marking ${missingCases.length} unmatched test case(s) as skipped...`);
+    }
+
+    for (const execCase of missingCases) {
+      try {
+        const skipPayload = {
+          id: execCase.id,
+          test_plan_test_case: execCase.test_plan_test_case?.id || execCase.test_plan_test_case,
+          project: projectId,
+          status: RUN_RESULT_MAP.skip,
+          test_plan: testPlanId
+        };
+
+        if (execCase.test_plan_config && execCase.test_plan_config.id) {
+          skipPayload.test_plan_config = execCase.test_plan_config.id;
+        }
+
+        if (Array.isArray(execCase?.test_case_revision?.steps) && execCase.test_case_revision.steps.length) {
+          skipPayload.step_wise_result = execCase.test_case_revision.steps.map((step) => ({
+            ...step,
+            status: RUN_RESULT_MAP.skip
+          }));
+        }
+
+        const updateResult = await tcApiInstance.updateCaseRunResult(execCase.id, skipPayload);
+        if (updateResult && updateResult.id) {
+          skippedMissing += 1;
+        } else {
+          errors += 1;
+        }
+      } catch {
+        errors += 1;
+      }
+    }
+  }
+
   return {
     matched,
     updated,
     errors,
+    skippedMissing,
     unresolvedIds: unique(unresolvedIds || []),
     unmatchedCaseIds: unique([...unmatchedCaseIds]),
     unmatchedConfigIds: unique([...unmatchedConfigIds])
@@ -1001,6 +1049,9 @@ function validateRequiredOptions({ apiKey, project, testPlanId }) {
 function logUploadSummary(formatLabel, summary) {
   console.log(`✅ ${formatLabel} report processed (${summary.matched || 0} matched, ${summary.updated || 0} updated)`);
 
+  if (summary.skippedMissing) {
+    console.log(`⏭️  ${summary.skippedMissing} test case(s) not in result file marked as skipped`);
+  }
   if (summary.unresolvedIds?.length) {
     console.warn(`⚠️  ${summary.unresolvedIds.length} testcase(s) missing TestCollab ID`);
   }
@@ -1029,7 +1080,8 @@ export async function report(options) {
     testPlanId,
     format,
     resultFile,
-    apiUrl
+    apiUrl,
+    skipMissing
   } = options;
 
   // Resolve API key: --api-key flag takes precedence, then TESTCOLLAB_TOKEN env var
@@ -1076,7 +1128,8 @@ export async function report(options) {
         apiUrl,
         hasConfig: parsedReport.hasConfig,
         resultsToUpload: parsedReport.resultsToUpload,
-        unresolvedIds: parsedReport.unresolvedIds
+        unresolvedIds: parsedReport.unresolvedIds,
+        skipMissing: Boolean(skipMissing)
       });
 
       logUploadSummary('JUnit', summary);
@@ -1105,7 +1158,8 @@ export async function report(options) {
       apiUrl,
       hasConfig: parsedReport.hasConfig,
       resultsToUpload: parsedReport.resultsToUpload,
-      unresolvedIds: parsedReport.unresolvedIds
+      unresolvedIds: parsedReport.unresolvedIds,
+      skipMissing: Boolean(skipMissing)
     });
 
     logUploadSummary('Mochawesome', summary);
