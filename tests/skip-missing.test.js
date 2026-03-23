@@ -107,53 +107,40 @@ describe('--skip-missing flag', () => {
       expect(missingCases[1].id).toBe(3);
     });
 
-    test('should produce correct skip payload for missing cases', () => {
-      const RUN_RESULT_MAP_SKIP = 3;
+    test('should extract test case IDs for bulkAction payload', () => {
       const projectId = 42;
       const testPlanId = 99;
 
-      const execCase = {
-        id: 5,
-        test_plan_test_case: { id: 50, test_case: 500 },
-        test_plan_config: { id: 7 },
-        test_case_revision: {
-          steps: [
-            { id: 1, title: 'Step 1', expected: 'Result 1' },
-            { id: 2, title: 'Step 2', expected: 'Result 2' }
-          ]
-        }
-      };
+      // Simulated missing cases (not matched by results)
+      const missingCases = [
+        { id: 2, test_plan_test_case: { id: 20, test_case: 200 } },
+        { id: 3, test_plan_test_case: { id: 30, test_case: 300 } },
+        { id: 5, test_plan_test_case: { id: 50, test_case: 500 } }
+      ];
 
-      const skipPayload = {
-        id: execCase.id,
-        test_plan_test_case: execCase.test_plan_test_case.id,
+      // Extract test case IDs the same way the CLI does
+      const missingTestCaseIds = missingCases
+        .map((c) => {
+          const tptc = c.test_plan_test_case;
+          if (tptc && typeof tptc === 'object') {
+            return tptc.test_case;
+          }
+          return null;
+        })
+        .filter((id) => id !== null && id !== undefined);
+
+      const bulkPayload = {
+        actionType: 'skip',
+        testcases: missingTestCaseIds,
         project: projectId,
-        status: RUN_RESULT_MAP_SKIP,
-        test_plan: testPlanId
+        testplan: testPlanId
       };
 
-      if (execCase.test_plan_config && execCase.test_plan_config.id) {
-        skipPayload.test_plan_config = execCase.test_plan_config.id;
-      }
-
-      if (Array.isArray(execCase?.test_case_revision?.steps) && execCase.test_case_revision.steps.length) {
-        skipPayload.step_wise_result = execCase.test_case_revision.steps.map((step) => ({
-          ...step,
-          status: RUN_RESULT_MAP_SKIP
-        }));
-      }
-
-      expect(skipPayload).toEqual({
-        id: 5,
-        test_plan_test_case: 50,
+      expect(bulkPayload).toEqual({
+        actionType: 'skip',
+        testcases: [200, 300, 500],
         project: 42,
-        status: 3,
-        test_plan: 99,
-        test_plan_config: 7,
-        step_wise_result: [
-          { id: 1, title: 'Step 1', expected: 'Result 1', status: 3 },
-          { id: 2, title: 'Step 2', expected: 'Result 2', status: 3 }
-        ]
+        testplan: 99
       });
     });
 
@@ -172,23 +159,24 @@ describe('--skip-missing flag', () => {
       expect(missingCases).toHaveLength(0);
     });
 
-    test('should handle case where test_plan_test_case is a plain id (not object)', () => {
-      const RUN_RESULT_MAP_SKIP = 3;
+    test('should skip cases with plain id test_plan_test_case (not object)', () => {
+      // When test_plan_test_case is a plain number, test_case ID cannot be extracted
+      const missingCases = [
+        { id: 8, test_plan_test_case: 80 }
+      ];
 
-      const execCase = {
-        id: 8,
-        test_plan_test_case: 80 // plain ID, not an object
-      };
+      const missingTestCaseIds = missingCases
+        .map((c) => {
+          const tptc = c.test_plan_test_case;
+          if (tptc && typeof tptc === 'object') {
+            return tptc.test_case;
+          }
+          return null;
+        })
+        .filter((id) => id !== null && id !== undefined);
 
-      const skipPayload = {
-        id: execCase.id,
-        test_plan_test_case: execCase.test_plan_test_case?.id || execCase.test_plan_test_case,
-        project: 42,
-        status: RUN_RESULT_MAP_SKIP,
-        test_plan: 99
-      };
-
-      expect(skipPayload.test_plan_test_case).toBe(80);
+      // Plain IDs should be filtered out since we can't extract test_case from them
+      expect(missingTestCaseIds).toHaveLength(0);
     });
   });
 });

@@ -776,10 +776,10 @@ class TcApiClient {
     }
   }
 
-  async bulkStatusUpdate(data) {
+  async bulkSkipTestCases(data) {
     try {
-      const result = await this.request('/executedtestcases/bulkStatusUpdate', {
-        method: 'PUT',
+      const result = await this.request('/testplantestcases/bulkAction', {
+        method: 'POST',
         body: data
       });
       return result;
@@ -980,43 +980,42 @@ async function uploadUsingReporterFlow({
     if (missingCases.length) {
       console.log(`\n⏭️  --skip-missing: marking ${missingCases.length} unmatched test case(s) as skipped...`);
 
-      const missingIds = missingCases.map((c) => c.id);
-
-      const bulkResult = await tcApiInstance.bulkStatusUpdate({
-        project: projectId,
-        test_plan: testPlanId,
-        execcaseIds: missingIds,
-        status: RUN_RESULT_MAP.skip
-      });
-
-      if (bulkResult && bulkResult.status === true) {
-        skippedMissing = bulkResult.affected || missingCases.length;
-      } else {
-        // Fallback: try individual updates if bulk endpoint is not available
-        console.log('⚠️  Bulk update not available, falling back to individual updates...');
-        for (const execCase of missingCases) {
-          try {
-            const skipPayload = {
-              id: execCase.id,
-              test_plan_test_case: execCase.test_plan_test_case?.id || execCase.test_plan_test_case,
-              project: projectId,
-              status: RUN_RESULT_MAP.skip,
-              test_plan: testPlanId
-            };
-
-            if (execCase.test_plan_config && execCase.test_plan_config.id) {
-              skipPayload.test_plan_config = execCase.test_plan_config.id;
-            }
-
-            const updateResult = await tcApiInstance.updateCaseRunResult(execCase.id, skipPayload);
-            if (updateResult && updateResult.id) {
-              skippedMissing += 1;
-            } else {
-              errors += 1;
-            }
-          } catch {
-            errors += 1;
+      // Extract test case IDs (not executed test case IDs) for the bulkAction endpoint
+      const missingTestCaseIds = missingCases
+        .map((c) => {
+          const tptc = c.test_plan_test_case;
+          if (tptc && typeof tptc === 'object') {
+            return tptc.test_case;
           }
+          return null;
+        })
+        .filter((id) => id !== null && id !== undefined);
+
+      if (missingTestCaseIds.length) {
+        const bulkPayload = {
+          actionType: 'skip',
+          testcases: missingTestCaseIds,
+          project: projectId,
+          testplan: testPlanId
+        };
+
+        // Include config if the test plan uses configurations
+        if (hasConfig) {
+          const configIds = Object.keys(resultsToUpload);
+          const firstConfigId = configIds.find((id) => id && String(id) !== '0');
+          if (firstConfigId) {
+            bulkPayload.test_plan_config = Number(firstConfigId);
+          }
+        }
+
+        const bulkResult = await tcApiInstance.bulkSkipTestCases(bulkPayload);
+
+        if (bulkResult && bulkResult.status === true) {
+          skippedMissing = bulkResult.affected || missingTestCaseIds.length;
+        } else {
+          const errMsg = (bulkResult && bulkResult.message) || 'Unknown error';
+          console.warn(`⚠️  Bulk skip failed: ${errMsg}`);
+          errors += missingTestCaseIds.length;
         }
       }
     }
