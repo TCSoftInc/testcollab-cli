@@ -775,6 +775,18 @@ class TcApiClient {
       return false;
     }
   }
+
+  async bulkStatusUpdate(data) {
+    try {
+      const result = await this.request('/executedtestcases/bulkStatusUpdate', {
+        method: 'PUT',
+        body: data
+      });
+      return result;
+    } catch {
+      return null;
+    }
+  }
 }
 
 function findMatchingExecutedCase(casesAssigned, runRecord, hasConfig, configId) {
@@ -967,37 +979,45 @@ async function uploadUsingReporterFlow({
 
     if (missingCases.length) {
       console.log(`\n⏭️  --skip-missing: marking ${missingCases.length} unmatched test case(s) as skipped...`);
-    }
 
-    for (const execCase of missingCases) {
-      try {
-        const skipPayload = {
-          id: execCase.id,
-          test_plan_test_case: execCase.test_plan_test_case?.id || execCase.test_plan_test_case,
-          project: projectId,
-          status: RUN_RESULT_MAP.skip,
-          test_plan: testPlanId
-        };
+      const missingIds = missingCases.map((c) => c.id);
 
-        if (execCase.test_plan_config && execCase.test_plan_config.id) {
-          skipPayload.test_plan_config = execCase.test_plan_config.id;
+      const bulkResult = await tcApiInstance.bulkStatusUpdate({
+        project: projectId,
+        test_plan: testPlanId,
+        execcaseIds: missingIds,
+        status: RUN_RESULT_MAP.skip
+      });
+
+      if (bulkResult && bulkResult.status === true) {
+        skippedMissing = bulkResult.affected || missingCases.length;
+      } else {
+        // Fallback: try individual updates if bulk endpoint is not available
+        console.log('⚠️  Bulk update not available, falling back to individual updates...');
+        for (const execCase of missingCases) {
+          try {
+            const skipPayload = {
+              id: execCase.id,
+              test_plan_test_case: execCase.test_plan_test_case?.id || execCase.test_plan_test_case,
+              project: projectId,
+              status: RUN_RESULT_MAP.skip,
+              test_plan: testPlanId
+            };
+
+            if (execCase.test_plan_config && execCase.test_plan_config.id) {
+              skipPayload.test_plan_config = execCase.test_plan_config.id;
+            }
+
+            const updateResult = await tcApiInstance.updateCaseRunResult(execCase.id, skipPayload);
+            if (updateResult && updateResult.id) {
+              skippedMissing += 1;
+            } else {
+              errors += 1;
+            }
+          } catch {
+            errors += 1;
+          }
         }
-
-        if (Array.isArray(execCase?.test_case_revision?.steps) && execCase.test_case_revision.steps.length) {
-          skipPayload.step_wise_result = execCase.test_case_revision.steps.map((step) => ({
-            ...step,
-            status: RUN_RESULT_MAP.skip
-          }));
-        }
-
-        const updateResult = await tcApiInstance.updateCaseRunResult(execCase.id, skipPayload);
-        if (updateResult && updateResult.id) {
-          skippedMissing += 1;
-        } else {
-          errors += 1;
-        }
-      } catch {
-        errors += 1;
       }
     }
   }
