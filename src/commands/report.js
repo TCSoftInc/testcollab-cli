@@ -980,42 +980,48 @@ async function uploadUsingReporterFlow({
     if (missingCases.length) {
       console.log(`\n⏭️  --skip-missing: marking ${missingCases.length} unmatched test case(s) as skipped...`);
 
-      // Extract test case IDs (not executed test case IDs) for the bulkAction endpoint
-      const missingTestCaseIds = missingCases
-        .map((c) => {
-          const tptc = c.test_plan_test_case;
-          if (tptc && typeof tptc === 'object') {
-            return tptc.test_case;
-          }
-          return null;
-        })
-        .filter((id) => id !== null && id !== undefined);
+      // Group missing cases by config ID — the bulkAction endpoint requires
+      // test_plan_config when configs exist, so we need one call per config
+      const missingByConfig = {};
+      for (const c of missingCases) {
+        const tptc = c.test_plan_test_case;
+        const testCaseId = tptc && typeof tptc === 'object' ? tptc.test_case : null;
+        if (testCaseId === null || testCaseId === undefined) {
+          continue;
+        }
+        const configId = c.test_plan_config && typeof c.test_plan_config === 'object'
+          ? String(c.test_plan_config.id)
+          : c.test_plan_config ? String(c.test_plan_config) : '0';
+        if (!missingByConfig[configId]) {
+          missingByConfig[configId] = [];
+        }
+        missingByConfig[configId].push(testCaseId);
+      }
 
-      if (missingTestCaseIds.length) {
+      for (const [configId, testCaseIds] of Object.entries(missingByConfig)) {
+        if (!testCaseIds.length) {
+          continue;
+        }
+
         const bulkPayload = {
           actionType: 'skip',
-          testcases: missingTestCaseIds,
+          testcases: testCaseIds,
           project: projectId,
           testplan: testPlanId
         };
 
-        // Include config if the test plan uses configurations
-        if (hasConfig) {
-          const configIds = Object.keys(resultsToUpload);
-          const firstConfigId = configIds.find((id) => id && String(id) !== '0');
-          if (firstConfigId) {
-            bulkPayload.test_plan_config = Number(firstConfigId);
-          }
+        if (configId && configId !== '0') {
+          bulkPayload.test_plan_config = Number(configId);
         }
 
         const bulkResult = await tcApiInstance.bulkSkipTestCases(bulkPayload);
 
         if (bulkResult && bulkResult.status === true) {
-          skippedMissing = bulkResult.affected || missingTestCaseIds.length;
+          skippedMissing += bulkResult.affected || testCaseIds.length;
         } else {
           const errMsg = (bulkResult && bulkResult.message) || 'Unknown error';
-          console.warn(`⚠️  Bulk skip failed: ${errMsg}`);
-          errors += missingTestCaseIds.length;
+          console.warn(`⚠️  Bulk skip failed for config ${configId}: ${errMsg}`);
+          errors += testCaseIds.length;
         }
       }
     }

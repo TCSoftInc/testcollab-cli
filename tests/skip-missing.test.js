@@ -107,41 +107,66 @@ describe('--skip-missing flag', () => {
       expect(missingCases[1].id).toBe(3);
     });
 
-    test('should extract test case IDs for bulkAction payload', () => {
-      const projectId = 42;
-      const testPlanId = 99;
-
-      // Simulated missing cases (not matched by results)
+    test('should extract test case IDs for bulkAction payload (no configs)', () => {
+      // Simulated missing cases without configs
       const missingCases = [
         { id: 2, test_plan_test_case: { id: 20, test_case: 200 } },
         { id: 3, test_plan_test_case: { id: 30, test_case: 300 } },
         { id: 5, test_plan_test_case: { id: 50, test_case: 500 } }
       ];
 
-      // Extract test case IDs the same way the CLI does
-      const missingTestCaseIds = missingCases
-        .map((c) => {
-          const tptc = c.test_plan_test_case;
-          if (tptc && typeof tptc === 'object') {
-            return tptc.test_case;
-          }
-          return null;
-        })
-        .filter((id) => id !== null && id !== undefined);
+      // Group by config the same way the CLI does
+      const missingByConfig = {};
+      for (const c of missingCases) {
+        const tptc = c.test_plan_test_case;
+        const testCaseId = tptc && typeof tptc === 'object' ? tptc.test_case : null;
+        if (testCaseId === null || testCaseId === undefined) continue;
+        const configId = c.test_plan_config && typeof c.test_plan_config === 'object'
+          ? String(c.test_plan_config.id)
+          : c.test_plan_config ? String(c.test_plan_config) : '0';
+        if (!missingByConfig[configId]) missingByConfig[configId] = [];
+        missingByConfig[configId].push(testCaseId);
+      }
 
-      const bulkPayload = {
-        actionType: 'skip',
-        testcases: missingTestCaseIds,
-        project: projectId,
-        testplan: testPlanId
-      };
+      expect(missingByConfig).toEqual({ '0': [200, 300, 500] });
+    });
 
-      expect(bulkPayload).toEqual({
-        actionType: 'skip',
-        testcases: [200, 300, 500],
-        project: 42,
-        testplan: 99
+    test('should group missing cases by config for bulkAction calls', () => {
+      // Missing cases with different configs
+      const missingCases = [
+        { id: 2, test_plan_test_case: { id: 20, test_case: 200 }, test_plan_config: { id: 5 } },
+        { id: 3, test_plan_test_case: { id: 30, test_case: 300 }, test_plan_config: { id: 5 } },
+        { id: 4, test_plan_test_case: { id: 40, test_case: 400 }, test_plan_config: { id: 8 } },
+        { id: 6, test_plan_test_case: { id: 60, test_case: 600 }, test_plan_config: { id: 8 } }
+      ];
+
+      const missingByConfig = {};
+      for (const c of missingCases) {
+        const tptc = c.test_plan_test_case;
+        const testCaseId = tptc && typeof tptc === 'object' ? tptc.test_case : null;
+        if (testCaseId === null || testCaseId === undefined) continue;
+        const configId = c.test_plan_config && typeof c.test_plan_config === 'object'
+          ? String(c.test_plan_config.id)
+          : c.test_plan_config ? String(c.test_plan_config) : '0';
+        if (!missingByConfig[configId]) missingByConfig[configId] = [];
+        missingByConfig[configId].push(testCaseId);
+      }
+
+      expect(missingByConfig).toEqual({
+        '5': [200, 300],
+        '8': [400, 600]
       });
+
+      // Verify payload for config 5
+      const payload5 = {
+        actionType: 'skip',
+        testcases: missingByConfig['5'],
+        project: 42,
+        testplan: 99,
+        test_plan_config: 5
+      };
+      expect(payload5.testcases).toEqual([200, 300]);
+      expect(payload5.test_plan_config).toBe(5);
     });
 
     test('should not skip any cases when all are matched', () => {
