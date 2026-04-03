@@ -8,11 +8,20 @@ npm install -g @testcollab/cli
 
 ## Quick Start
 
-Upload test results to TestCollab from your CI pipeline in two steps:
+Upload test results to TestCollab from your CI pipeline — no setup required:
 
 ```bash
 export TESTCOLLAB_TOKEN=your_token_here
 
+# Run your tests, then upload results (auto-creates everything in TestCollab)
+tc report --project 123 --format junit --result-file ./results.xml --auto-create
+```
+
+That's it. The `--auto-create` flag creates the tag, suites, test cases, and test plan for you.
+
+For more control, you can pre-create a test plan and map results by ID:
+
+```bash
 # Step 1: Create a test plan with your CI-tagged cases
 tc createTestPlan --project 123 --ci-tag-id 456 --assignee-id 789
 
@@ -30,11 +39,11 @@ tc sync --project 123
 
 | Command | What it does |
 |---------|-------------|
+| [`tc report`](#tc-report) | Upload Mochawesome or JUnit results (with `--auto-create` or to an existing plan) |
 | [`tc createTestPlan`](#tc-createtestplan) | Create a test plan and assign tagged cases |
-| [`tc report`](#tc-report) | Upload Mochawesome or JUnit results |
 | [`tc sync`](#tc-sync) | Sync `.feature` files from Git to TestCollab (designed for CI/CD, works locally too) |
 
-The most common workflow is **createTestPlan → run your tests → report** to automatically upload test results from CI/CD.
+The simplest workflow is **run your tests → `report --auto-create`**. For more control, use **createTestPlan → run your tests → report**.
 
 ---
 
@@ -68,24 +77,66 @@ tc createTestPlan \
 Parses a test result file (Mochawesome JSON or JUnit XML) and uploads results to a TestCollab test plan.
 
 ```bash
-tc report \
-  --project <id> \
-  --test-plan-id <id> \
-  --format <mochawesome|junit> \
-  --result-file <path> \
-  [--api-key <key>] \
-  [--api-url <url>]
+# Auto-create mode (zero setup)
+tc report --project <id> --format <mochawesome|junit> --result-file <path> --auto-create
+
+# Existing plan mode
+tc report --project <id> --test-plan-id <id> --format <mochawesome|junit> --result-file <path>
 ```
 
 | Option | Required | Description |
 |--------|----------|-------------|
 | `--project <id>` | Yes | Project ID |
-| `--test-plan-id <id>` | Yes | Test plan to attach results to |
+| `--test-plan-id <id>` | * | Test plan to attach results to (required unless `--auto-create`) |
 | `--format <type>` | Yes | `mochawesome` or `junit` |
 | `--result-file <path>` | Yes | Path to the result file |
 | `--api-key <key>` | No | TestCollab API key (or set `TESTCOLLAB_TOKEN` env var) |
 | `--api-url <url>` | No | API base URL override (default: `https://api.testcollab.io`). Use `https://api-eu.testcollab.io` for EU region. |
 | `--skip-missing` | No | Mark test cases in the test plan but not in the result file as **skipped** |
+| `--auto-create` | * | Auto-create tag, suites, test cases, folder, and test plan from result file |
+
+> \* Either `--test-plan-id` or `--auto-create` is required (they are mutually exclusive).
+
+#### `--auto-create`
+
+The zero-setup option for CI pipelines. When `--auto-create` is passed instead of `--test-plan-id`, the CLI parses your result file and automatically creates everything needed in TestCollab:
+
+```bash
+tc report \
+  --project 123 \
+  --format junit \
+  --result-file ./results.xml \
+  --auto-create
+```
+
+**What it creates (only if missing):**
+
+| Resource | Name | Created once or every run? |
+|----------|------|---------------------------|
+| Tag | `CI Imported` | Once (reused on subsequent runs) |
+| Test suites | Humanized from classname/describe block | Once per unique name |
+| Test cases | From test names in result file | Once (matched by ID or title on subsequent runs) |
+| Test plan folder | `CI` | Once |
+| Test plan | `CI Run: DD-MM-YYYY HH:MM` | Every run |
+
+**How test matching works:**
+
+- If a test name contains a TC ID (e.g., `[TC-42] should login`) — matched by ID
+- If no TC ID — matched by normalized title within the same suite (case-insensitive, whitespace-collapsed)
+- If no match at all — a new test case is created
+
+Both modes can coexist in the same result file. Some tests can have IDs while others rely on title matching.
+
+**Suite name cleanup:** Raw suite names from test runners are automatically humanized:
+
+| Raw (from test runner) | Becomes |
+|------------------------|---------|
+| `com.app.LoginTests` | `Login` |
+| `tests/auth/login.spec.ts` | `Login` |
+| `UserProfileTests` | `User Profile` |
+| `user_profile_spec` | `User Profile` |
+
+**Required permissions:** The API key must have permissions to create tags, suites, test cases, test plans, test plan folders, and assign test plans. Typically the **Admin** or **Lead** role. See [docs/auto-create.md](docs/auto-create.md) for the full list.
 
 #### `--skip-missing`
 
@@ -102,7 +153,7 @@ tc report \
 
 #### Mapping test cases
 
-Your test names must include a TestCollab case ID so results can be matched. Any of these patterns work:
+When using `--test-plan-id` (not `--auto-create`), your test names must include a TestCollab case ID so results can be matched. Any of these patterns work:
 
 ```
 [TC-123] Login should succeed          ← bracketed
@@ -110,6 +161,8 @@ TC-123 Login should succeed            ← prefix
 Login should succeed id-123            ← id- prefix
 Login should succeed testcase-123      ← testcase- prefix
 ```
+
+When using `--auto-create`, IDs are optional — tests without IDs are matched by title or created automatically.
 
 #### Configuration-specific runs
 
@@ -222,11 +275,47 @@ $env:TESTCOLLAB_TOKEN = "your_token_here"
 
 ## CI/CD Integration
 
-The most common use case is uploading test results from CI: create a test plan, run your tests, then report results back to TestCollab.
+The most common use case is uploading test results from CI. The simplest approach uses `--auto-create`:
 
 ### GitHub Actions
 
-#### Upload test results (create plan + run tests + report)
+#### Upload test results (auto-create — recommended)
+
+```yaml
+name: Test Pipeline
+on:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      TESTCOLLAB_TOKEN: ${{ secrets.TESTCOLLAB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - run: npm install -g @testcollab/cli && npm ci
+
+      # Run your tests (example: Playwright with JUnit output)
+      - run: npx playwright test --reporter=junit --output=results.xml
+
+      # Upload results — auto-creates everything in TestCollab
+      - run: |
+          tc report \
+            --project ${{ secrets.TC_PROJECT_ID }} \
+            --format junit \
+            --result-file results.xml \
+            --auto-create
+```
+
+#### Upload test results (manual plan — for full control)
+
+If you need to control exactly which test cases go into the plan (via a CI tag), use the two-step `createTestPlan` + `report` workflow:
 
 ```yaml
 name: Test Pipeline
@@ -304,7 +393,22 @@ jobs:
 
 ### GitLab CI
 
-#### Upload test results
+#### Upload test results (auto-create)
+
+```yaml
+test-and-report:
+  stage: test
+  image: node:22
+  variables:
+    TESTCOLLAB_TOKEN: $TESTCOLLAB_TOKEN
+  before_script:
+    - npm install -g @testcollab/cli && npm ci
+  script:
+    - npx playwright test --reporter=junit --output=results.xml
+    - tc report --project $TC_PROJECT_ID --format junit --result-file results.xml --auto-create
+```
+
+#### Upload test results (manual plan)
 
 ```yaml
 test-and-report:
