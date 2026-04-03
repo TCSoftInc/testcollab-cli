@@ -1307,14 +1307,20 @@ async function autoCreateTestPlan({ apiKey, apiUrl, projectId, parsedReport }) {
   }
 
   // 5. Fetch existing test cases per suite (for title matching)
+  // TCV-6489: The SDK's getTestCases does not support suite as a direct query
+  // parameter, and passing it via _filter causes a 500 from the API. Use a
+  // direct fetch with the suite query parameter instead.
+  const effectiveApiUrl = getBaseApiUrl(apiUrl);
   const testCasesBySuite = {};
   for (const rawSuite of uniqueRawSuites) {
     const suiteObj = suiteMap[rawSuite];
-    const cases = await testCasesApi.getTestCases({
-      project: projectId,
-      limit: -1,
-      filter: JSON.stringify({ suite: suiteObj.id })
-    });
+    const url = `${effectiveApiUrl}/testcases?project=${projectId}&suite=${suiteObj.id}&_limit=-1&token=${encodeURIComponent(apiKey)}`;
+    const resp = await fetch(url);
+    if (!resp.ok) {
+      const body = await resp.text().catch(() => '');
+      throw new Error(`Failed to fetch test cases for suite ${suiteObj.id}: HTTP ${resp.status} ${body}`);
+    }
+    const cases = await resp.json();
     testCasesBySuite[suiteObj.id] = cases || [];
   }
 
@@ -1602,7 +1608,18 @@ export async function report(options) {
 
     logUploadSummary(normalizedFormat === 'junit' ? 'JUnit' : 'Mochawesome', summary);
   } catch (err) {
-    console.error(`❌ Error: ${err?.message || String(err)}`);
+    // TCV-6489: The SDK throws raw Response objects on non-2xx status codes,
+    // which stringify as "[object Response]". Extract the actual error details.
+    if (err && typeof err === 'object' && 'status' in err && 'text' in err) {
+      try {
+        const bodyText = await err.text();
+        console.error(`❌ Error: HTTP ${err.status} ${err.statusText || ''} - ${bodyText}`);
+      } catch {
+        console.error(`❌ Error: HTTP ${err.status} ${err.statusText || ''}`);
+      }
+    } else {
+      console.error(`❌ Error: ${err?.message || String(err)}`);
+    }
     process.exit(1);
   }
 }
