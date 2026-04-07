@@ -194,14 +194,19 @@ function getFailureDetails(body) {
   };
 }
 
-function collectAllTestsFromSuite(suite, parentSuiteName) {
+function collectAllTestsFromSuite(suite, parentSuitePath = []) {
   try {
-    const suiteName = (suite && suite.title) || parentSuiteName || '';
+    const rawTitle = suite && typeof suite.title === 'string' ? suite.title : '';
+    const suitePath = rawTitle ? [...parentSuitePath, rawTitle] : [...parentSuitePath];
+    const suiteName = suitePath.length ? suitePath[suitePath.length - 1] : '';
     const rawTests = suite && Array.isArray(suite.tests) ? suite.tests : [];
-    const tests = rawTests.map(t => Object.assign({}, t, { _suiteName: suiteName }));
+    const tests = rawTests.map(t => Object.assign({}, t, {
+      _suiteName: suiteName,
+      _suitePath: suitePath
+    }));
     const childSuites = suite && Array.isArray(suite.suites) ? suite.suites : [];
     childSuites.forEach((childSuite) => {
-      const nestedTests = collectAllTestsFromSuite(childSuite, suiteName);
+      const nestedTests = collectAllTestsFromSuite(childSuite, suitePath);
       if (nestedTests && nestedTests.length) {
         tests.push(...nestedTests);
       }
@@ -399,6 +404,7 @@ export function parseMochawesomeReport(payload) {
           allTests.push({
             title,
             suite: testData._suiteName || '',
+            suitePath: Array.isArray(testData._suitePath) ? testData._suitePath : (testData._suiteName ? [testData._suiteName] : []),
             tcId: tcId || null,
             configId: id,
             status: toRunStatus(state),
@@ -443,6 +449,7 @@ export function parseMochawesomeReport(payload) {
         allTests.push({
           title,
           suite: testData._suiteName || '',
+          suitePath: Array.isArray(testData._suitePath) ? testData._suitePath : (testData._suiteName ? [testData._suiteName] : []),
           tcId: tcId || null,
           configId: '0',
           status: toRunStatus(state),
@@ -589,6 +596,7 @@ export function parseJUnitReport(junitXmlContent) {
   const allTests = testCases.map(tc => ({
     title: tc.title,
     suite: tc.suite,
+    suitePath: tc.suite ? [tc.suite] : [],
     tcId: tc.testCaseId || null,
     configId: tc.configId ? String(tc.configId) : '0',
     status: toRunStatus(tc.state),
@@ -1283,45 +1291,94 @@ async function autoCreateTestPlan({ apiKey, apiUrl, projectId, parsedReport }) {
   const existingSuites = await suitesApi.getAllSuites({ project: projectId });
   const suiteCache = [...(existingSuites || [])];
 
-  // 4. Build suite map: raw suite name → TestCollab suite
-  const suiteMap = {};
-  const uniqueRawSuites = [...new Set(allTests.map(t => t.suite))];
+  // 4. Build suite hierarchy by path
+  // TCV-6492: Preserve the parent/child relationships described by the nested
+  // suite structure in the test report. Tests carry a `suitePath` (array of
+  // raw suite titles from root to leaf); we walk every prefix so parent
+  // suites are created before their children, matching or creating at each
+  // level with the correct parentId.
+  const suitePathKey = (path) => path.join('\x00');
+  const suitePathToSuite = {};
 
-  for (const rawSuite of uniqueRawSuites) {
-    const humanized = humanizeSuiteName(rawSuite);
-    let suiteObj = suiteCache.find(s => s.title === humanized);
+  const getTestSuitePath = (t) => {
+    if (Array.isArray(t.suitePath) && t.suitePath.length) {
+      return t.suitePath;
+    }
+    return [t.suite || ''];
+  };
+
+  const seenPathKeys = new Set();
+  const uniquePaths = [];
+  for (const t of allTests) {
+    const path = getTestSuitePath(t);
+    for (let i = 1; i <= path.length; i++) {
+      const prefix = path.slice(0, i);
+      const key = suitePathKey(prefix);
+      if (!seenPathKeys.has(key)) {
+        seenPathKeys.add(key);
+        uniquePaths.push(prefix);
+      }
+    }
+  }
+  // Create/resolve parents before children.
+  uniquePaths.sort((a, b) => a.length - b.length);
+
+  for (const path of uniquePaths) {
+    const humanized = humanizeSuiteName(path[path.length - 1]);
+    const parentSuite = path.length > 1
+      ? suitePathToSuite[suitePathKey(path.slice(0, -1))]
+      : null;
+    const parentId = parentSuite ? parentSuite.id : 0;
+
+    let suiteObj = suiteCache.find(s =>
+      s.title === humanized && Number(s.parentId || 0) === Number(parentId)
+    );
     if (!suiteObj) {
       suiteObj = await suitesApi.addSuite({
         addSuitePayload: {
-          parentId: 0,
+          parentId,
           title: humanized,
           project: projectId
         }
       });
+      // The API response may omit parentId; remember what we asked for so
+      // subsequent matches against the cache still work.
+      if (suiteObj && (suiteObj.parentId === undefined || suiteObj.parentId === null)) {
+        suiteObj.parentId = parentId;
+      }
       suiteCache.push(suiteObj);
-      console.log(`   ✓ Suite "${humanized}" (created, id: ${suiteObj.id})`);
+      const parentNote = parentId ? `, parentId: ${parentId}` : '';
+      console.log(`   ✓ Suite "${humanized}" (created, id: ${suiteObj.id}${parentNote})`);
     } else {
       console.log(`   ✓ Suite "${humanized}" (existing, id: ${suiteObj.id})`);
     }
-    suiteMap[rawSuite] = suiteObj;
+    suitePathToSuite[suitePathKey(path)] = suiteObj;
   }
 
-  // 5. Fetch existing test cases per suite (for title matching)
+  const resolveSuiteForTest = (t) => suitePathToSuite[suitePathKey(getTestSuitePath(t))];
+
+  // 5. Fetch existing test cases per leaf suite (for title matching)
   // TCV-6489: The SDK's getTestCases does not support suite as a direct query
   // parameter, and passing it via _filter causes a 500 from the API. Use a
   // direct fetch with the suite query parameter instead.
   const effectiveApiUrl = getBaseApiUrl(apiUrl);
   const testCasesBySuite = {};
-  for (const rawSuite of uniqueRawSuites) {
-    const suiteObj = suiteMap[rawSuite];
-    const url = `${effectiveApiUrl}/testcases?project=${projectId}&suite=${suiteObj.id}&_limit=-1&token=${encodeURIComponent(apiKey)}`;
+  const leafSuiteIds = new Set();
+  for (const t of allTests) {
+    const s = resolveSuiteForTest(t);
+    if (s && s.id != null) {
+      leafSuiteIds.add(s.id);
+    }
+  }
+  for (const suiteId of leafSuiteIds) {
+    const url = `${effectiveApiUrl}/testcases?project=${projectId}&suite=${suiteId}&_limit=-1&token=${encodeURIComponent(apiKey)}`;
     const resp = await fetch(url);
     if (!resp.ok) {
       const body = await resp.text().catch(() => '');
-      throw new Error(`Failed to fetch test cases for suite ${suiteObj.id}: HTTP ${resp.status} ${body}`);
+      throw new Error(`Failed to fetch test cases for suite ${suiteId}: HTTP ${resp.status} ${body}`);
     }
     const cases = await resp.json();
-    testCasesBySuite[suiteObj.id] = cases || [];
+    testCasesBySuite[suiteId] = cases || [];
   }
 
   // 6. For each test: match by ID or title, create if needed, ensure tag
@@ -1330,7 +1387,7 @@ async function autoCreateTestPlan({ apiKey, apiUrl, projectId, parsedReport }) {
   let createdCount = 0;
 
   for (const test of allTests) {
-    const targetSuite = suiteMap[test.suite];
+    const targetSuite = resolveSuiteForTest(test);
 
     if (test.tcId) {
       // Has TC ID — verify it exists and ensure tag

@@ -274,3 +274,90 @@ describe('parseMochawesomeReport — allTests output', () => {
     expect(records[0].tcId).toBe('50');
   });
 });
+
+describe('parseMochawesomeReport — nested suite hierarchy (TCV-6492)', () => {
+  // Mirrors the structure reported in TCV-6492: MCP suite with Claude and
+  // Codex as child suites, plus a test directly under MCP.
+  const nestedMochawesome = {
+    results: [
+      {
+        suites: [
+          {
+            title: '[TS-92956] MCP',
+            tests: [
+              {
+                title: '[TC-847988] Verify MCP init',
+                fullTitle: '[TS-92956] MCP [TC-847988] Verify MCP init',
+                state: 'passed',
+                duration: 2000,
+                err: {}
+              }
+            ],
+            suites: [
+              {
+                title: '[TS-92957] Claude',
+                tests: [
+                  {
+                    title: '[TC-847994] Verify account creation',
+                    fullTitle: '[TS-92956] MCP [TS-92957] Claude [TC-847994] Verify account creation',
+                    state: 'passed',
+                    duration: 1000,
+                    err: {}
+                  }
+                ],
+                suites: []
+              },
+              {
+                title: '[TS-92955] Codex',
+                tests: [
+                  {
+                    title: '[TC-847987] Verify Codex generation',
+                    fullTitle: '[TS-92956] MCP [TS-92955] Codex [TC-847987] Verify Codex generation',
+                    state: 'passed',
+                    duration: 2000,
+                    err: {}
+                  }
+                ],
+                suites: []
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  };
+
+  test('each test carries its full suite path from root to leaf', () => {
+    const report = parseMochawesomeReport(nestedMochawesome);
+    expect(report.allTests).toHaveLength(3);
+
+    const byTcId = Object.fromEntries(report.allTests.map(t => [t.tcId, t]));
+
+    expect(byTcId['847988'].suitePath).toEqual(['[TS-92956] MCP']);
+    expect(byTcId['847994'].suitePath).toEqual(['[TS-92956] MCP', '[TS-92957] Claude']);
+    expect(byTcId['847987'].suitePath).toEqual(['[TS-92956] MCP', '[TS-92955] Codex']);
+  });
+
+  test('innermost suite name is still exposed via the suite field', () => {
+    const report = parseMochawesomeReport(nestedMochawesome);
+    const byTcId = Object.fromEntries(report.allTests.map(t => [t.tcId, t]));
+
+    expect(byTcId['847988'].suite).toBe('[TS-92956] MCP');
+    expect(byTcId['847994'].suite).toBe('[TS-92957] Claude');
+    expect(byTcId['847987'].suite).toBe('[TS-92955] Codex');
+  });
+});
+
+describe('parseJUnitReport — suitePath (TCV-6492)', () => {
+  const sampleJunit = `<?xml version="1.0" encoding="UTF-8"?>
+<testsuites>
+  <testsuite name="AuthSuite">
+    <testcase classname="com.app.AuthTests" name="[TC-100] login" time="0.5" />
+  </testsuite>
+</testsuites>`;
+
+  test('junit allTests entries carry a single-element suitePath', () => {
+    const report = parseJUnitReport(sampleJunit);
+    expect(report.allTests[0].suitePath).toEqual(['com.app.AuthTests']);
+  });
+});
