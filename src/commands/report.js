@@ -504,14 +504,63 @@ export function parseJUnitXml(junitXmlContent) {
     throw new Error('JUnit XML content is empty or invalid');
   }
 
-  const testCases = [];
-  const testcaseRegex = /<testcase\b([^>]*?)(?:\/>|>([\s\S]*?)<\/testcase>)/gi;
-  let match;
+  // Walk the XML in document order so we can track nested <testsuite> elements
+  // and assign each <testcase> the correct ancestor path. The token regex
+  // matches one of: a closing </testsuite>, an opening <testsuite> (possibly
+  // self-closing), or a complete <testcase> (self-closing or with body).
+  // \b ensures we don't match the outer <testsuites> wrapper.
+  const tokenRegex = /<\/testsuite\s*>|<testsuite\b([^>]*?)(\/?)>|<testcase\b([^>]*?)(?:\/>|>([\s\S]*?)<\/testcase\s*>)/gi;
+  const suiteStack = [];
+  // First pass: collect each testcase with a snapshot of its ancestor stack
+  // and the maximum nesting depth seen anywhere in the file. This lets us
+  // pick a single, consistent strategy for the whole report instead of
+  // mixing classname-based and stack-based suites in one document.
+  const rawCases = [];
+  let maxStackDepth = 0;
+  let token;
 
-  while ((match = testcaseRegex.exec(junitXmlContent)) !== null) {
-    const attrs = parseXmlAttributes(match[1] || '');
-    const body = match[2] || '';
+  while ((token = tokenRegex.exec(junitXmlContent)) !== null) {
+    const matched = token[0];
 
+    if (/^<\/testsuite/i.test(matched)) {
+      suiteStack.pop();
+      continue;
+    }
+
+    if (/^<testsuite\b/i.test(matched)) {
+      const suiteAttrs = parseXmlAttributes(token[1] || '');
+      const suiteName = (suiteAttrs.name || '').trim();
+      suiteStack.push(suiteName);
+      if (suiteStack.length > maxStackDepth) {
+        maxStackDepth = suiteStack.length;
+      }
+      // Self-closing <testsuite ... /> never wraps anything, so pop immediately.
+      if (token[2] === '/') {
+        suiteStack.pop();
+      }
+      continue;
+    }
+
+    // <testcase ...>
+    const attrs = parseXmlAttributes(token[3] || '');
+    const body = token[4] || '';
+
+    rawCases.push({
+      attrs,
+      body,
+      stackSnapshot: suiteStack.filter(Boolean).slice()
+    });
+  }
+
+  // If the document uses nested <testsuite> elements anywhere (depth >= 2),
+  // build the suitePath from the testcase's actual ancestor stack — the
+  // classname in nested JUnit reports is typically the full ancestor chain
+  // concatenated with the test name and is not useful as a suite name.
+  // For flat single-level documents, fall back to the legacy classname-based
+  // behavior so existing reports keep working unchanged.
+  const useNestedHierarchy = maxStackDepth >= 2;
+
+  const testCases = rawCases.map(({ attrs, body, stackSnapshot }) => {
     const rawName = (attrs.name || '').trim();
     const rawClassName = (attrs.classname || '').trim();
     const timeInSeconds = Number.parseFloat(attrs.time);
@@ -531,17 +580,28 @@ export function parseJUnitXml(junitXmlContent) {
     const testCaseId = extractTestCaseIdFromTitle(rawName) || extractTestCaseIdFromTitle(rawClassName);
     const configId = extractConfigIdFromText(rawName) || extractConfigIdFromText(rawClassName);
 
-    testCases.push({
+    let suitePath;
+    let leafSuite;
+    if (useNestedHierarchy && stackSnapshot.length) {
+      suitePath = [...stackSnapshot];
+      leafSuite = suitePath[suitePath.length - 1];
+    } else {
+      leafSuite = rawClassName || stackSnapshot[0] || 'JUnit Tests';
+      suitePath = [leafSuite];
+    }
+
+    return {
       title: rawName || '(Unnamed test case)',
-      suite: rawClassName || 'JUnit Tests',
+      suite: leafSuite,
+      suitePath,
       testCaseId,
       configId,
       duration,
       state,
       failureMessage: failureDetails.message,
       failureStack: failureDetails.stack
-    });
-  }
+    };
+  });
 
   if (!testCases.length) {
     throw new Error('No <testcase> elements were found in the provided JUnit XML');
@@ -596,7 +656,9 @@ export function parseJUnitReport(junitXmlContent) {
   const allTests = testCases.map(tc => ({
     title: tc.title,
     suite: tc.suite,
-    suitePath: tc.suite ? [tc.suite] : [],
+    suitePath: Array.isArray(tc.suitePath) && tc.suitePath.length
+      ? tc.suitePath
+      : (tc.suite ? [tc.suite] : []),
     tcId: tc.testCaseId || null,
     configId: tc.configId ? String(tc.configId) : '0',
     status: toRunStatus(tc.state),

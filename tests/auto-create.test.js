@@ -361,3 +361,89 @@ describe('parseJUnitReport — suitePath (TCV-6492)', () => {
     expect(report.allTests[0].suitePath).toEqual(['com.app.AuthTests']);
   });
 });
+
+describe('parseJUnitReport — nested testsuite hierarchy (TCV-6492)', () => {
+  // Nested <testsuite> structure (used by some JUnit emitters). Each
+  // <testcase> should inherit the full ancestor chain as its suitePath.
+  const nestedJunit = `<?xml version="1.0" encoding="UTF-8"?>
+<testsuites>
+  <testsuite name="MCP Platform">
+    <testsuite name="Server Lifecycle">
+      <testsuite name="Boot Validation">
+        <testcase name="[TC-1] happy path" classname="MCP Platform Server Lifecycle Boot Validation [TC-1] happy path" time="1.28" />
+        <testcase name="[TC-2] failure" classname="MCP Platform Server Lifecycle Boot Validation [TC-2] failure" time="1.10">
+          <failure message="oops">stack</failure>
+        </testcase>
+      </testsuite>
+      <testsuite name="Heartbeat">
+        <testcase name="[TC-3] beat" classname="MCP Platform Server Lifecycle Heartbeat [TC-3] beat" time="0.62" />
+      </testsuite>
+    </testsuite>
+    <testsuite name="Tools">
+      <testcase name="[TC-4] list" classname="MCP Platform Tools [TC-4] list" time="0.5" />
+    </testsuite>
+  </testsuite>
+</testsuites>`;
+
+  test('each test carries the full <testsuite> ancestor chain as suitePath', () => {
+    const report = parseJUnitReport(nestedJunit);
+    const byTcId = Object.fromEntries(report.allTests.map(t => [t.tcId, t]));
+
+    expect(byTcId['1'].suitePath).toEqual(['MCP Platform', 'Server Lifecycle', 'Boot Validation']);
+    expect(byTcId['2'].suitePath).toEqual(['MCP Platform', 'Server Lifecycle', 'Boot Validation']);
+    expect(byTcId['3'].suitePath).toEqual(['MCP Platform', 'Server Lifecycle', 'Heartbeat']);
+    expect(byTcId['4'].suitePath).toEqual(['MCP Platform', 'Tools']);
+  });
+
+  test('innermost testsuite name is exposed as the suite field (not the unhelpful classname)', () => {
+    const report = parseJUnitReport(nestedJunit);
+    const byTcId = Object.fromEntries(report.allTests.map(t => [t.tcId, t]));
+    expect(byTcId['1'].suite).toBe('Boot Validation');
+    expect(byTcId['3'].suite).toBe('Heartbeat');
+    expect(byTcId['4'].suite).toBe('Tools');
+  });
+
+  test('flat single-level JUnit still falls back to classname (backward compat)', () => {
+    const flatJunit = `<?xml version="1.0" encoding="UTF-8"?>
+<testsuites>
+  <testsuite name="AuthSuite">
+    <testcase classname="com.app.AuthTests" name="[TC-100] login" time="0.5" />
+    <testcase classname="UserTests" name="[TC-200] view profile" time="0.3" />
+  </testsuite>
+</testsuites>`;
+    const report = parseJUnitReport(flatJunit);
+    expect(report.allTests[0].suite).toBe('com.app.AuthTests');
+    expect(report.allTests[0].suitePath).toEqual(['com.app.AuthTests']);
+    expect(report.allTests[1].suite).toBe('UserTests');
+    expect(report.allTests[1].suitePath).toEqual(['UserTests']);
+  });
+
+  test('failure details from nested <testcase> are preserved', () => {
+    const report = parseJUnitReport(nestedJunit);
+    const failed = report.allTests.find(t => t.tcId === '2');
+    expect(failed.status).toBe(2);
+    expect(failed.errDetails).toContain('stack');
+  });
+
+  test('testcases sitting directly under an intermediate testsuite use the stack, not classname', () => {
+    // In Vishal's report, some testcases sit directly under "MCP Platform"
+    // (depth 1) instead of inside a leaf suite. In a document that uses
+    // nested suites overall, these should still be routed to "MCP Platform"
+    // — not to a synthetic suite named after their (path-prefixed) classname.
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<testsuites>
+  <testsuite name="MCP Platform">
+    <testsuite name="Server Lifecycle">
+      <testcase name="[TC-10] inner" classname="MCP Platform Server Lifecycle [TC-10] inner" time="0.5"/>
+    </testsuite>
+    <testcase name="[TC-20] baseline" classname="MCP Platform [TC-20] baseline" time="0.3"/>
+  </testsuite>
+</testsuites>`;
+    const report = parseJUnitReport(xml);
+    const byTcId = Object.fromEntries(report.allTests.map(t => [t.tcId, t]));
+
+    expect(byTcId['10'].suitePath).toEqual(['MCP Platform', 'Server Lifecycle']);
+    expect(byTcId['20'].suitePath).toEqual(['MCP Platform']);
+    expect(byTcId['20'].suite).toBe('MCP Platform');
+  });
+});
