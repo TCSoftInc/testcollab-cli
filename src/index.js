@@ -12,6 +12,7 @@ import { featuresync } from './commands/featuresync.js';
 import { createTestPlan } from './commands/createTestPlan.js';
 import { report } from './commands/report.js';
 import { specgen } from './commands/specgen.js';
+import { getTestPlan } from './commands/getTestPlan.js';
 
 // Initialize commanderq
 const program = new Command();
@@ -66,6 +67,17 @@ program
   .option('--yes', 'Skip confirmation prompts', false)
   .option('--dry-run', 'Discover and preview targets without generating files', false)
   .action(specgen);
+
+// Add getTestPlan command
+program
+  .command('getTestPlan')
+  .description('Fetch a test plan and its test cases as JSON (for agent-driven execution)')
+  .option('--api-key <key>', 'TestCollab API key (or set TESTCOLLAB_TOKEN env var)')
+  .requiredOption('--project <id>', 'TestCollab project ID')
+  .requiredOption('--test-plan-id <id>', 'Test plan ID to fetch')
+  .option('--api-url <url>', 'TestCollab API base URL', 'https://api.testcollab.io')
+  .option('--output <path>', 'Write JSON to file instead of stdout')
+  .action(getTestPlan);
 
 // Parse command line arguments and execute the program
 program.parse(process.argv);
