@@ -13,6 +13,17 @@
 
 import fs from 'fs';
 import path from 'path';
+import {
+  Configuration,
+  TestCasesApi,
+  SuitesApi,
+  TestPlanFoldersApi,
+  TestPlansApi,
+  TestPlanTestCasesApi,
+  TestPlansAssignmentApi,
+  UsersApi,
+  ProjectsApi
+} from 'testcollab-sdk';
 
 const RUN_RESULT_MAP = {
   pass: 1,
@@ -40,6 +51,65 @@ const CONFIG_ID_PATTERNS = [
   /\bconfig-(\d+)\b/i,
   /\[\s*config-id-(\d+)\s*\]/i
 ];
+
+/**
+ * Humanize a raw test suite name from test runners.
+ *
+ * Handles Java packages, file paths, common suffixes, and casing conventions.
+ *
+ * Examples:
+ *   "com.foo.bar.LoginTests"     → "Login"
+ *   "tests/auth/login.spec.ts"   → "Login"
+ *   "UserProfileTests"           → "User Profile"
+ *   "user_profile_spec"          → "User Profile"
+ *   "my-component-test"          → "My Component"
+ *   ""                           → "Uncategorized"
+ */
+export function humanizeSuiteName(raw) {
+  let name = String(raw || '').trim();
+  if (!name) {
+    return 'Uncategorized';
+  }
+
+  // 1. Strip file path prefix (everything before the last / or \)
+  name = name.replace(/^.*[/\\]/, '');
+
+  // 2. Strip common test file extensions (before package prefix to avoid matching "login.spec" as package)
+  name = name.replace(/\.(spec|test|tests)\.(ts|tsx|js|jsx|mjs|cjs|py|java|kt|rb|go)$/i, '');
+  name = name.replace(/\.(ts|tsx|js|jsx|mjs|cjs|py|java|kt|rb|go)$/i, '');
+
+  // 3. Strip Java-style package prefix (all-lowercase dot-separated segments before a capitalized class name)
+  //    e.g. "com.foo.bar.LoginTests" → "LoginTests"
+  name = name.replace(/^(?:[a-z][a-z0-9]*\.)+/, '');
+
+  // 4. Strip common test suffixes at end of name
+  name = name.replace(/(Tests|Test|Spec|Suite|Specs)$/i, '');
+
+  // 5. Split camelCase: "UserProfile" → "User Profile"
+  name = name.replace(/([a-z])([A-Z])/g, '$1 $2');
+
+  // 6. Split snake_case and kebab-case: "user_profile" or "user-profile" → "user profile"
+  name = name.replace(/[_-]+/g, ' ');
+
+  // 7. Collapse whitespace and trim
+  name = name.replace(/\s+/g, ' ').trim();
+
+  // 8. Title case each word
+  name = name
+    .split(' ')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(' ');
+
+  return name || 'Uncategorized';
+}
+
+/**
+ * Normalize a test case title for comparison.
+ * Lowercase, trim, collapse all whitespace to a single space.
+ */
+export function normalizeTitle(title) {
+  return String(title || '').toLowerCase().trim().replace(/\s+/g, ' ');
+}
 
 function toAbsolutePath(inputPath) {
   return path.isAbsolute(inputPath) ? inputPath : path.join(process.cwd(), inputPath);
@@ -124,12 +194,19 @@ function getFailureDetails(body) {
   };
 }
 
-function collectAllTestsFromSuite(suite) {
+function collectAllTestsFromSuite(suite, parentSuitePath = []) {
   try {
-    const tests = suite && Array.isArray(suite.tests) ? [...suite.tests] : [];
+    const rawTitle = suite && typeof suite.title === 'string' ? suite.title : '';
+    const suitePath = rawTitle ? [...parentSuitePath, rawTitle] : [...parentSuitePath];
+    const suiteName = suitePath.length ? suitePath[suitePath.length - 1] : '';
+    const rawTests = suite && Array.isArray(suite.tests) ? suite.tests : [];
+    const tests = rawTests.map(t => Object.assign({}, t, {
+      _suiteName: suiteName,
+      _suitePath: suitePath
+    }));
     const childSuites = suite && Array.isArray(suite.suites) ? suite.suites : [];
     childSuites.forEach((childSuite) => {
-      const nestedTests = collectAllTestsFromSuite(childSuite);
+      const nestedTests = collectAllTestsFromSuite(childSuite, suitePath);
       if (nestedTests && nestedTests.length) {
         tests.push(...nestedTests);
       }
@@ -280,6 +357,7 @@ export function parseMochawesomeReport(payload) {
 
   const resultsToUpload = {};
   const unresolvedIds = [];
+  const allTests = [];
   let hasConfig = false;
   let tests = 0;
   let passes = 0;
@@ -317,9 +395,26 @@ export function parseMochawesomeReport(payload) {
             skipped += 1;
           }
 
+          const title = String(testData?.fullTitle || testData?.title || '').trim() || '(Unnamed test case)';
+          const tcId = extractTestCaseIdFromMochawesomeTest(testData);
+          const errMessage = String(testData?.err?.message || '').trim();
+          const errStack = String(testData?.err?.estack || testData?.err?.stack || '').trim();
+          const durationRaw = Number.parseInt(testData?.duration, 10);
+
+          allTests.push({
+            title,
+            suite: testData._suiteName || '',
+            suitePath: Array.isArray(testData._suitePath) ? testData._suitePath : (testData._suiteName ? [testData._suiteName] : []),
+            tcId: tcId || null,
+            configId: id,
+            status: toRunStatus(state),
+            errDetails: errStack || errMessage || null,
+            duration: durationMsToSeconds(durationRaw)
+          });
+
           const runRecord = prepareMochawesomeRunRecord(testData);
           if (!runRecord) {
-            unresolvedIds.push(String(testData?.fullTitle || testData?.title || '').trim() || '(Unnamed test case)');
+            unresolvedIds.push(title);
             return;
           }
 
@@ -345,9 +440,26 @@ export function parseMochawesomeReport(payload) {
           skipped += 1;
         }
 
+        const title = String(testData?.fullTitle || testData?.title || '').trim() || '(Unnamed test case)';
+        const tcId = extractTestCaseIdFromMochawesomeTest(testData);
+        const errMessage = String(testData?.err?.message || '').trim();
+        const errStack = String(testData?.err?.estack || testData?.err?.stack || '').trim();
+        const durationRaw = Number.parseInt(testData?.duration, 10);
+
+        allTests.push({
+          title,
+          suite: testData._suiteName || '',
+          suitePath: Array.isArray(testData._suitePath) ? testData._suitePath : (testData._suiteName ? [testData._suiteName] : []),
+          tcId: tcId || null,
+          configId: '0',
+          status: toRunStatus(state),
+          errDetails: errStack || errMessage || null,
+          duration: durationMsToSeconds(durationRaw)
+        });
+
         const runRecord = prepareMochawesomeRunRecord(testData);
         if (!runRecord) {
-          unresolvedIds.push(String(testData?.fullTitle || testData?.title || '').trim() || '(Unnamed test case)');
+          unresolvedIds.push(title);
           return;
         }
 
@@ -359,7 +471,7 @@ export function parseMochawesomeReport(payload) {
     });
   });
 
-  if (!Object.keys(resultsToUpload).length) {
+  if (!Object.keys(resultsToUpload).length && !allTests.length) {
     throw new Error('Could not parse results.');
   }
 
@@ -376,6 +488,7 @@ export function parseMochawesomeReport(payload) {
     format: 'mochawesome',
     hasConfig,
     resultsToUpload,
+    allTests,
     stats: {
       tests,
       passes,
@@ -391,14 +504,63 @@ export function parseJUnitXml(junitXmlContent) {
     throw new Error('JUnit XML content is empty or invalid');
   }
 
-  const testCases = [];
-  const testcaseRegex = /<testcase\b([^>]*?)(?:\/>|>([\s\S]*?)<\/testcase>)/gi;
-  let match;
+  // Walk the XML in document order so we can track nested <testsuite> elements
+  // and assign each <testcase> the correct ancestor path. The token regex
+  // matches one of: a closing </testsuite>, an opening <testsuite> (possibly
+  // self-closing), or a complete <testcase> (self-closing or with body).
+  // \b ensures we don't match the outer <testsuites> wrapper.
+  const tokenRegex = /<\/testsuite\s*>|<testsuite\b([^>]*?)(\/?)>|<testcase\b([^>]*?)(?:\/>|>([\s\S]*?)<\/testcase\s*>)/gi;
+  const suiteStack = [];
+  // First pass: collect each testcase with a snapshot of its ancestor stack
+  // and the maximum nesting depth seen anywhere in the file. This lets us
+  // pick a single, consistent strategy for the whole report instead of
+  // mixing classname-based and stack-based suites in one document.
+  const rawCases = [];
+  let maxStackDepth = 0;
+  let token;
 
-  while ((match = testcaseRegex.exec(junitXmlContent)) !== null) {
-    const attrs = parseXmlAttributes(match[1] || '');
-    const body = match[2] || '';
+  while ((token = tokenRegex.exec(junitXmlContent)) !== null) {
+    const matched = token[0];
 
+    if (/^<\/testsuite/i.test(matched)) {
+      suiteStack.pop();
+      continue;
+    }
+
+    if (/^<testsuite\b/i.test(matched)) {
+      const suiteAttrs = parseXmlAttributes(token[1] || '');
+      const suiteName = (suiteAttrs.name || '').trim();
+      suiteStack.push(suiteName);
+      if (suiteStack.length > maxStackDepth) {
+        maxStackDepth = suiteStack.length;
+      }
+      // Self-closing <testsuite ... /> never wraps anything, so pop immediately.
+      if (token[2] === '/') {
+        suiteStack.pop();
+      }
+      continue;
+    }
+
+    // <testcase ...>
+    const attrs = parseXmlAttributes(token[3] || '');
+    const body = token[4] || '';
+
+    rawCases.push({
+      attrs,
+      body,
+      stackSnapshot: suiteStack.filter(Boolean).slice()
+    });
+  }
+
+  // If the document uses nested <testsuite> elements anywhere (depth >= 2),
+  // build the suitePath from the testcase's actual ancestor stack — the
+  // classname in nested JUnit reports is typically the full ancestor chain
+  // concatenated with the test name and is not useful as a suite name.
+  // For flat single-level documents, fall back to the legacy classname-based
+  // behavior so existing reports keep working unchanged.
+  const useNestedHierarchy = maxStackDepth >= 2;
+
+  const testCases = rawCases.map(({ attrs, body, stackSnapshot }) => {
     const rawName = (attrs.name || '').trim();
     const rawClassName = (attrs.classname || '').trim();
     const timeInSeconds = Number.parseFloat(attrs.time);
@@ -418,17 +580,28 @@ export function parseJUnitXml(junitXmlContent) {
     const testCaseId = extractTestCaseIdFromTitle(rawName) || extractTestCaseIdFromTitle(rawClassName);
     const configId = extractConfigIdFromText(rawName) || extractConfigIdFromText(rawClassName);
 
-    testCases.push({
+    let suitePath;
+    let leafSuite;
+    if (useNestedHierarchy && stackSnapshot.length) {
+      suitePath = [...stackSnapshot];
+      leafSuite = suitePath[suitePath.length - 1];
+    } else {
+      leafSuite = rawClassName || stackSnapshot[0] || 'JUnit Tests';
+      suitePath = [leafSuite];
+    }
+
+    return {
       title: rawName || '(Unnamed test case)',
-      suite: rawClassName || 'JUnit Tests',
+      suite: leafSuite,
+      suitePath,
       testCaseId,
       configId,
       duration,
       state,
       failureMessage: failureDetails.message,
       failureStack: failureDetails.stack
-    });
-  }
+    };
+  });
 
   if (!testCases.length) {
     throw new Error('No <testcase> elements were found in the provided JUnit XML');
@@ -480,7 +653,20 @@ export function parseJUnitReport(junitXmlContent) {
     });
   });
 
-  if (!Object.keys(resultsToUpload).length) {
+  const allTests = testCases.map(tc => ({
+    title: tc.title,
+    suite: tc.suite,
+    suitePath: Array.isArray(tc.suitePath) && tc.suitePath.length
+      ? tc.suitePath
+      : (tc.suite ? [tc.suite] : []),
+    tcId: tc.testCaseId || null,
+    configId: tc.configId ? String(tc.configId) : '0',
+    status: toRunStatus(tc.state),
+    errDetails: String(tc.failureStack || tc.failureMessage || '').trim() || null,
+    duration: tc.duration
+  }));
+
+  if (!Object.keys(resultsToUpload).length && !allTests.length) {
     throw new Error('Could not parse results.');
   }
 
@@ -488,6 +674,7 @@ export function parseJUnitReport(junitXmlContent) {
     format: 'junit',
     hasConfig,
     resultsToUpload,
+    allTests,
     stats: {
       tests: testCases.length,
       passes,
@@ -1099,6 +1286,335 @@ function normalizeReportFormat(value) {
   return '';
 }
 
+function getFormattedDate() {
+  const now = new Date();
+  const dd = String(now.getDate()).padStart(2, '0');
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  const yyyy = now.getFullYear();
+  const hh = String(now.getHours()).padStart(2, '0');
+  const min = String(now.getMinutes()).padStart(2, '0');
+  return `${dd}-${mm}-${yyyy} ${hh}:${min}`;
+}
+
+function createSdkConfig(apiKey, apiUrl) {
+  const effectiveApiUrl = getBaseApiUrl(apiUrl);
+  return new Configuration({
+    basePath: effectiveApiUrl,
+    fetchApi: (url, opts) => {
+      const separator = url.includes('?') ? '&' : '?';
+      return fetch(`${url}${separator}token=${encodeURIComponent(apiKey)}`, opts);
+    }
+  });
+}
+
+/**
+ * Auto-create mode orchestrator.
+ *
+ * Creates all missing TestCollab resources (tag, suites, test cases, folder, test plan)
+ * from the parsed test result file, then returns the new test plan ID.
+ *
+ * Uses testcollab-sdk (same pattern as createTestPlan.js).
+ */
+async function autoCreateTestPlan({ apiKey, apiUrl, projectId, parsedReport }) {
+  const config = createSdkConfig(apiKey, apiUrl);
+
+  const usersApi = new UsersApi(config);
+  const testCasesApi = new TestCasesApi(config);
+  const suitesApi = new SuitesApi(config);
+  const foldersApi = new TestPlanFoldersApi(config);
+  const testPlansApi = new TestPlansApi(config);
+  const testPlanCasesApi = new TestPlanTestCasesApi(config);
+  const testPlanAssignmentApi = new TestPlansAssignmentApi(config);
+
+  const allTests = parsedReport.allTests;
+  if (!allTests || !allTests.length) {
+    throw new Error('No tests found in result file for auto-create');
+  }
+
+  console.log('🔧 Auto-create mode: setting up TestCollab resources...');
+
+  // 1. Get current user
+  const currentUser = await usersApi.getMyUser();
+  if (!currentUser || !currentUser.id) {
+    throw new Error('Failed to fetch current user. Check your API key.');
+  }
+
+  // 2. Find or create "CI Imported" tag
+  const existingTags = await testCasesApi.getTestCasesTags({ project: projectId });
+  let ciTag = (existingTags || []).find(t => t.name === 'CI Imported');
+  if (!ciTag) {
+    ciTag = await testCasesApi.addTags({
+      testCasesTagPayload: { name: 'CI Imported', project: projectId }
+    });
+  }
+  console.log(`   ✓ Tag "CI Imported" (id: ${ciTag.id})`);
+
+  // 3. Fetch all existing suites
+  const existingSuites = await suitesApi.getAllSuites({ project: projectId });
+  const suiteCache = [...(existingSuites || [])];
+
+  // 4. Build suite hierarchy by path
+  // TCV-6492: Preserve the parent/child relationships described by the nested
+  // suite structure in the test report. Tests carry a `suitePath` (array of
+  // raw suite titles from root to leaf); we walk every prefix so parent
+  // suites are created before their children, matching or creating at each
+  // level with the correct parentId.
+  const suitePathKey = (path) => path.join('\x00');
+  const suitePathToSuite = {};
+
+  const getTestSuitePath = (t) => {
+    if (Array.isArray(t.suitePath) && t.suitePath.length) {
+      return t.suitePath;
+    }
+    return [t.suite || ''];
+  };
+
+  const seenPathKeys = new Set();
+  const uniquePaths = [];
+  for (const t of allTests) {
+    const path = getTestSuitePath(t);
+    for (let i = 1; i <= path.length; i++) {
+      const prefix = path.slice(0, i);
+      const key = suitePathKey(prefix);
+      if (!seenPathKeys.has(key)) {
+        seenPathKeys.add(key);
+        uniquePaths.push(prefix);
+      }
+    }
+  }
+  // Create/resolve parents before children.
+  uniquePaths.sort((a, b) => a.length - b.length);
+
+  for (const path of uniquePaths) {
+    const humanized = humanizeSuiteName(path[path.length - 1]);
+    const parentSuite = path.length > 1
+      ? suitePathToSuite[suitePathKey(path.slice(0, -1))]
+      : null;
+    const parentId = parentSuite ? parentSuite.id : 0;
+
+    let suiteObj = suiteCache.find(s =>
+      s.title === humanized && Number(s.parentId || 0) === Number(parentId)
+    );
+    if (!suiteObj) {
+      suiteObj = await suitesApi.addSuite({
+        addSuitePayload: {
+          parentId,
+          title: humanized,
+          project: projectId
+        }
+      });
+      // The API response may omit parentId; remember what we asked for so
+      // subsequent matches against the cache still work.
+      if (suiteObj && (suiteObj.parentId === undefined || suiteObj.parentId === null)) {
+        suiteObj.parentId = parentId;
+      }
+      suiteCache.push(suiteObj);
+      const parentNote = parentId ? `, parentId: ${parentId}` : '';
+      console.log(`   ✓ Suite "${humanized}" (created, id: ${suiteObj.id}${parentNote})`);
+    } else {
+      console.log(`   ✓ Suite "${humanized}" (existing, id: ${suiteObj.id})`);
+    }
+    suitePathToSuite[suitePathKey(path)] = suiteObj;
+  }
+
+  const resolveSuiteForTest = (t) => suitePathToSuite[suitePathKey(getTestSuitePath(t))];
+
+  // 5. Fetch existing test cases per leaf suite (for title matching)
+  // TCV-6489: The SDK's getTestCases does not support suite as a direct query
+  // parameter, and passing it via _filter causes a 500 from the API. Use a
+  // direct fetch with the suite query parameter instead.
+  const effectiveApiUrl = getBaseApiUrl(apiUrl);
+  const testCasesBySuite = {};
+  const leafSuiteIds = new Set();
+  for (const t of allTests) {
+    const s = resolveSuiteForTest(t);
+    if (s && s.id != null) {
+      leafSuiteIds.add(s.id);
+    }
+  }
+  for (const suiteId of leafSuiteIds) {
+    const url = `${effectiveApiUrl}/testcases?project=${projectId}&suite=${suiteId}&_limit=-1&token=${encodeURIComponent(apiKey)}`;
+    const resp = await fetch(url);
+    if (!resp.ok) {
+      const body = await resp.text().catch(() => '');
+      throw new Error(`Failed to fetch test cases for suite ${suiteId}: HTTP ${resp.status} ${body}`);
+    }
+    const cases = await resp.json();
+    testCasesBySuite[suiteId] = cases || [];
+  }
+
+  // 6. For each test: match by ID or title, create if needed, ensure tag
+  let matchedByIdCount = 0;
+  let matchedByTitleCount = 0;
+  let createdCount = 0;
+
+  for (const test of allTests) {
+    const targetSuite = resolveSuiteForTest(test);
+
+    if (test.tcId) {
+      // Has TC ID — verify it exists and ensure tag
+      try {
+        const existingCase = await testCasesApi.getTestCase({ id: Number(test.tcId) });
+        if (existingCase && existingCase.id) {
+          const existingTagIds = (existingCase.tags || []).map(t => typeof t === 'object' ? t.id : t);
+          if (!existingTagIds.includes(ciTag.id)) {
+            await testCasesApi.updateTestCase({
+              id: existingCase.id,
+              testCasePayload: {
+                title: existingCase.title,
+                project: projectId,
+                suite: existingCase.suite?.id || existingCase.suite || targetSuite.id,
+                tags: [...existingTagIds, ciTag.id],
+                customFields: []
+              }
+            });
+          }
+          matchedByIdCount++;
+        }
+      } catch {
+        // Test case with this ID doesn't exist — treat as unresolved
+        test.tcId = null;
+      }
+    }
+
+    if (!test.tcId) {
+      // No TC ID — search by normalized title within the suite
+      const normalizedTestTitle = normalizeTitle(test.title);
+      const suiteCases = testCasesBySuite[targetSuite.id] || [];
+      const match = suiteCases.find(c => normalizeTitle(c.title) === normalizedTestTitle);
+
+      if (match) {
+        test.tcId = String(match.id);
+        // Ensure tag on matched case
+        const existingTagIds = (match.tags || []).map(t => typeof t === 'object' ? t.id : t);
+        if (!existingTagIds.includes(ciTag.id)) {
+          await testCasesApi.updateTestCase({
+            id: match.id,
+            testCasePayload: {
+              title: match.title,
+              project: projectId,
+              suite: match.suite?.id || match.suite || targetSuite.id,
+              tags: [...existingTagIds, ciTag.id],
+              customFields: []
+            }
+          });
+        }
+        matchedByTitleCount++;
+      } else {
+        // Create new test case
+        const newCase = await testCasesApi.createTestCase({
+          testCasePayload: {
+            title: test.title,
+            project: projectId,
+            suite: targetSuite.id,
+            tags: [ciTag.id],
+            priority: 1,
+            customFields: []
+          }
+        });
+        test.tcId = String(newCase.id);
+        // Add to cache so duplicates in same run don't create again
+        testCasesBySuite[targetSuite.id].push(newCase);
+        createdCount++;
+      }
+    }
+  }
+  console.log(`   ✓ ${matchedByIdCount} matched by ID, ${matchedByTitleCount} matched by title, ${createdCount} created new`);
+
+  // 7. Rebuild resultsToUpload from enriched allTests
+  const newResultsToUpload = {};
+  for (const test of allTests) {
+    if (!test.tcId) continue;
+    const key = test.configId || '0';
+    if (!newResultsToUpload[key]) {
+      newResultsToUpload[key] = [];
+    }
+    newResultsToUpload[key].push({
+      tcId: String(test.tcId),
+      status: test.status,
+      errDetails: test.errDetails,
+      title: test.title,
+      duration: test.duration
+    });
+  }
+  parsedReport.resultsToUpload = newResultsToUpload;
+  parsedReport.unresolvedIds = [];
+
+  // 8. Find or create "CI" test plan folder
+  const existingFolders = await foldersApi.getTestPlanFolders({ project: projectId, limit: -1 });
+  let ciFolder = (existingFolders || []).find(f => f.title === 'CI');
+  if (!ciFolder) {
+    ciFolder = await foldersApi.createTestPlanFolder({
+      testPlanFolderPayload: {
+        project: projectId,
+        title: 'CI',
+        parentId: 0
+      }
+    });
+    console.log(`   ✓ Folder "CI" (created, id: ${ciFolder.id})`);
+  } else {
+    console.log(`   ✓ Folder "CI" (existing, id: ${ciFolder.id})`);
+  }
+
+  // 9. Create test plan
+  const planTitle = `CI Run: ${getFormattedDate()}`;
+  const newPlan = await testPlansApi.addTestPlan({
+    testPlanPayload: {
+      project: projectId,
+      title: planTitle,
+      description: 'Auto-created by tc-cli --auto-create',
+      status: 1,
+      priority: 1,
+      testPlanFolder: ciFolder.id,
+      customFields: []
+    }
+  });
+  console.log(`   ✓ Test Plan "${planTitle}" (id: ${newPlan.id})`);
+
+  // 10. Bulk-add test cases by tag
+  const addResult = await testPlanCasesApi.bulkAddTestPlanTestCases({
+    testPlanTestCaseBulkAddPayload: {
+      testplan: newPlan.id,
+      testCaseCollection: {
+        testCases: [],
+        selector: [
+          {
+            field: 'tags',
+            operator: 'jsonstring_2',
+            value: `{"filter":[[${ciTag.id}]],"type":"equals","filterType":"number"}`
+          }
+        ]
+      }
+    }
+  });
+  if (addResult && addResult.status === false) {
+    throw new Error('Failed to add test cases to the test plan');
+  }
+
+  // 11. Assign to current user
+  await testPlanAssignmentApi.assignTestPlan({
+    project: projectId,
+    testplan: newPlan.id,
+    testPlanAssignmentPayload: {
+      executor: 'team',
+      assignmentCriteria: 'testCase',
+      assignmentMethod: 'automatic',
+      assignment: {
+        user: [currentUser.id],
+        testCases: { testCases: [], selector: [] },
+        configuration: null
+      },
+      project: projectId,
+      testplan: newPlan.id
+    }
+  });
+
+  const totalCases = allTests.filter(t => t.tcId).length;
+  console.log(`   ✓ ${totalCases} test cases added and assigned to ${currentUser.firstName || currentUser.email}`);
+
+  return { testPlanId: newPlan.id };
+}
+
 export async function report(options) {
   const {
     project,
@@ -1106,16 +1622,48 @@ export async function report(options) {
     format,
     resultFile,
     apiUrl,
-    skipMissing
+    skipMissing,
+    autoCreate
   } = options;
 
   // Resolve API key: --api-key flag takes precedence, then TESTCOLLAB_TOKEN env var
   const apiKey = options.apiKey || process.env.TESTCOLLAB_TOKEN;
 
-  const {
-    parsedProjectId,
-    parsedTestPlanId
-  } = validateRequiredOptions({ apiKey, project, testPlanId });
+  if (!apiKey) {
+    console.error('❌ Error: No API key provided');
+    console.error('   Pass --api-key <key> or set the TESTCOLLAB_TOKEN environment variable.');
+    process.exit(1);
+  }
+
+  if (!project) {
+    console.error('❌ Error: --project is required');
+    process.exit(1);
+  }
+
+  const parsedProjectId = Number(project);
+  if (Number.isNaN(parsedProjectId)) {
+    console.error('❌ Error: --project must be a number');
+    process.exit(1);
+  }
+
+  // Validate: either --test-plan-id or --auto-create, not both, not neither
+  if (autoCreate && testPlanId) {
+    console.error('❌ Error: --test-plan-id and --auto-create are mutually exclusive');
+    process.exit(1);
+  }
+  if (!autoCreate && !testPlanId) {
+    console.error('❌ Error: Either --test-plan-id or --auto-create is required');
+    process.exit(1);
+  }
+
+  let parsedTestPlanId = null;
+  if (testPlanId) {
+    parsedTestPlanId = Number(testPlanId);
+    if (Number.isNaN(parsedTestPlanId)) {
+      console.error('❌ Error: --test-plan-id must be a number');
+      process.exit(1);
+    }
+  }
 
   const normalizedFormat = normalizeReportFormat(format);
   if (!normalizedFormat) {
@@ -1135,51 +1683,41 @@ export async function report(options) {
     process.exit(1);
   }
 
-  if (normalizedFormat === 'junit') {
-    try {
+  try {
+    // Parse the result file
+    let parsedReport;
+    if (normalizedFormat === 'junit') {
       const junitXmlContent = fs.readFileSync(absResultPath, 'utf8');
-      const parsedReport = parseJUnitReport(junitXmlContent);
-      const stats = parsedReport.stats;
-
-      console.log(
-        `ℹ️  Parsed JUnit XML (${stats.tests} tests: ${stats.passes} passed, ${stats.failures} failed, ${stats.skipped} skipped)`
-      );
-
-      console.log('🚀 Uploading JUnit test run result to TestCollab...');
-      const summary = await uploadUsingReporterFlow({
-        apiKey: String(apiKey),
-        projectId: parsedProjectId,
-        testPlanId: parsedTestPlanId,
-        apiUrl,
-        hasConfig: parsedReport.hasConfig,
-        resultsToUpload: parsedReport.resultsToUpload,
-        unresolvedIds: parsedReport.unresolvedIds,
-        skipMissing: Boolean(skipMissing)
-      });
-
-      logUploadSummary('JUnit', summary);
-    } catch (err) {
-      console.error(`❌ Error: ${err?.message || String(err)}`);
-      process.exit(1);
+      parsedReport = parseJUnitReport(junitXmlContent);
+    } else {
+      const mochawesomePayload = readMochawesomePayload(absResultPath);
+      parsedReport = parseMochawesomeReport(mochawesomePayload);
     }
 
-    return;
-  }
-
-  try {
-    const mochawesomePayload = readMochawesomePayload(absResultPath);
-    const parsedReport = parseMochawesomeReport(mochawesomePayload);
     const stats = parsedReport.stats;
-
+    const formatLabel = normalizedFormat === 'junit' ? 'JUnit XML' : 'Mochawesome JSON';
     console.log(
-      `ℹ️  Parsed Mochawesome JSON (${stats.tests} tests: ${stats.passes} passed, ${stats.failures} failed, ${stats.skipped} skipped)`
+      `ℹ️  Parsed ${formatLabel} (${stats.tests} tests: ${stats.passes} passed, ${stats.failures} failed, ${stats.skipped} skipped)`
     );
 
-    console.log('🚀 Uploading Mochawesome test run result to TestCollab...');
+    // Auto-create mode: create all missing resources
+    let effectiveTestPlanId = parsedTestPlanId;
+    if (autoCreate) {
+      const autoResult = await autoCreateTestPlan({
+        apiKey: String(apiKey),
+        apiUrl,
+        projectId: parsedProjectId,
+        parsedReport
+      });
+      effectiveTestPlanId = autoResult.testPlanId;
+    }
+
+    // Upload results
+    console.log(`🚀 Uploading ${formatLabel} test run result to TestCollab...`);
     const summary = await uploadUsingReporterFlow({
       apiKey: String(apiKey),
       projectId: parsedProjectId,
-      testPlanId: parsedTestPlanId,
+      testPlanId: effectiveTestPlanId,
       apiUrl,
       hasConfig: parsedReport.hasConfig,
       resultsToUpload: parsedReport.resultsToUpload,
@@ -1187,9 +1725,20 @@ export async function report(options) {
       skipMissing: Boolean(skipMissing)
     });
 
-    logUploadSummary('Mochawesome', summary);
+    logUploadSummary(normalizedFormat === 'junit' ? 'JUnit' : 'Mochawesome', summary);
   } catch (err) {
-    console.error(`❌ Error: ${err?.message || String(err)}`);
+    // TCV-6489: The SDK throws raw Response objects on non-2xx status codes,
+    // which stringify as "[object Response]". Extract the actual error details.
+    if (err && typeof err === 'object' && 'status' in err && 'text' in err) {
+      try {
+        const bodyText = await err.text();
+        console.error(`❌ Error: HTTP ${err.status} ${err.statusText || ''} - ${bodyText}`);
+      } catch {
+        console.error(`❌ Error: HTTP ${err.status} ${err.statusText || ''}`);
+      }
+    } else {
+      console.error(`❌ Error: ${err?.message || String(err)}`);
+    }
     process.exit(1);
   }
 }
