@@ -11,7 +11,6 @@ import { Command } from 'commander';
 import { featuresync } from './commands/featuresync.js';
 import { createTestPlan } from './commands/createTestPlan.js';
 import { report } from './commands/report.js';
-import { specgen } from './commands/specgen.js';
 import { getTestPlan } from './commands/getTestPlan.js';
 
 // Initialize commanderq
@@ -55,18 +54,6 @@ program
   .option('--skip-missing', 'Mark test cases in the test plan but not in the result file as skipped', false)
   .option('--auto-create', 'Auto-create missing tag, suites, test cases, folder, and test plan from result file')
   .action(report);
-
-// Add specgen command
-program
-  .command('specgen')
-  .description('Generate Gherkin `.feature` files by crawling source code with AI assistance')
-  .option('--src <path>', 'Source directory to analyze', './src')
-  .option('--out <path>', 'Output directory for generated `.feature` files', './features')
-  .option('--cache <path>', 'Cache file for discovered targets/families', '.testcollab/specgen.json')
-  .option('--model <name>', 'Anthropic model to use', 'claude-sonnet-4-5-20250929')
-  .option('--yes', 'Skip confirmation prompts', false)
-  .option('--dry-run', 'Discover and preview targets without generating files', false)
-  .action(specgen);
 
 // Add getTestPlan command
 program
