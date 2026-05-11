@@ -39,11 +39,12 @@ tc sync --project 123
 
 | Command | What it does |
 |---------|-------------|
-| [`tc report`](#tc-report) | Upload Mochawesome or JUnit results (with `--auto-create` or to an existing plan) |
 | [`tc createTestPlan`](#tc-createtestplan) | Create a test plan and assign tagged cases |
+| [`tc getTestPlan`](#tc-gettestplan) | Fetch a test plan as JSON for agent-driven execution |
+| [`tc report`](#tc-report) | Upload Mochawesome or JUnit results (with `--auto-create` or to an existing plan) |
 | [`tc sync`](#tc-sync) | Sync `.feature` files from Git to TestCollab (designed for CI/CD, works locally too) |
 
-The simplest workflow is **run your tests → `report --auto-create`**. For more control, use **createTestPlan → run your tests → report**.
+The simplest workflow is **run your tests → `report --auto-create`**. For more control, use **createTestPlan → run your tests → report**. For agent-driven execution of human-curated test plans, see the [Agentic QA Guide](docs/agentic-qa.md).
 
 ---
 
@@ -69,6 +70,73 @@ tc createTestPlan \
 | `--api-url <url>` | No | API base URL (default: `https://api.testcollab.io`). Use `https://api-eu.testcollab.io` for EU region. |
 
 **Output:** Writes the created plan ID to `tmp/tc_test_plan` as `TESTCOLLAB_TEST_PLAN_ID=<id>`. You can source this file in subsequent CI steps.
+
+---
+
+### `tc getTestPlan`
+
+Fetches a test plan and its test cases as structured JSON, designed to be consumed by AI coding agents (Claude Code, Cursor, Codex, etc.) that execute the cases against a running app via browser automation (e.g. Playwright MCP).
+
+```bash
+tc getTestPlan \
+  --project <id> \
+  --test-plan-id <id> \
+  [--api-key <key>] \
+  [--api-url <url>] \
+  [--output <path>]
+```
+
+| Option | Required | Description |
+|--------|----------|-------------|
+| `--project <id>` | Yes | Project ID |
+| `--test-plan-id <id>` | Yes | Test plan ID to fetch |
+| `--api-key <key>` | No | TestCollab API key (or set `TESTCOLLAB_TOKEN` env var) |
+| `--api-url <url>` | No | API base URL (default: `https://api.testcollab.io`). Use `https://api-eu.testcollab.io` for EU region. |
+| `--output <path>` | No | Write JSON to file instead of stdout |
+
+**Output shape** (HTML is stripped from step text and descriptions):
+
+```json
+{
+  "testPlan": {
+    "id": 555,
+    "title": "Sprint 12 Regression",
+    "status": "ready",
+    "description": "Regression tests for sprint 12 release",
+    "priority": "normal",
+    "totalCases": 15
+  },
+  "testCases": [
+    {
+      "id": 42,
+      "testPlanTestCaseId": 789,
+      "title": "Regular user cannot access admin settings",
+      "description": "Verify that a non-admin user is blocked from the admin panel",
+      "priority": "high",
+      "suite": "Permissions",
+      "status": "unexecuted",
+      "steps": [
+        { "step": "Log in as testuser@example.com", "expectedResult": "Dashboard is displayed" },
+        { "step": "Navigate to /admin/settings", "expectedResult": "403 page is shown" }
+      ]
+    }
+  ]
+}
+```
+
+If the plan has configurations (e.g. Browser × OS matrix), each test case also includes a `configResults` array with per-configuration status.
+
+**Piping:** progress messages go to stderr so stdout stays clean.
+
+```bash
+# Pipe to jq
+tc getTestPlan --project 16 --test-plan-id 555 2>/dev/null | jq '.testCases | length'
+
+# Write to file for an agent to consume
+tc getTestPlan --project 16 --test-plan-id 555 --output /tmp/plan.json
+```
+
+For the full agent-driven QA workflow that combines this with `tc report`, see the [Agentic QA Guide](docs/agentic-qa.md).
 
 ---
 
