@@ -26,7 +26,7 @@ You don't need to install the package to test changes. Run directly with Node:
 node src/index.js sync --project 123
 node src/index.js createTestPlan --api-key $TOKEN --project 123 ...
 node src/index.js report --api-key $TOKEN --project 123 ...
-node src/index.js specgen --src ../my-app/src --out ../my-app/features
+node src/index.js getTestPlan --project 123 --test-plan-id 555
 ```
 
 Or use `npm link` (see above) and run `tc` from anywhere.
@@ -34,12 +34,8 @@ Or use `npm link` (see above) and run `tc` from anywhere.
 ## Environment variables
 
 ```bash
-# Required for sync
+# Required for all commands
 export TESTCOLLAB_TOKEN=your_api_token
-
-# Required for specgen (pick one)
-export ANTHROPIC_API_KEY=sk-ant-...
-export GOOGLE_GENAI_API_KEY=...
 
 # Optional: point at a different API
 export API_URL=http://localhost:1337  # or use --api-url flag
@@ -51,13 +47,11 @@ export API_URL=http://localhost:1337  # or use --api-url flag
 tc-cli/
 ├── src/
 │   ├── index.js                  # CLI entry point (Commander.js)
-│   ├── commands/
-│   │   ├── featuresync.js        # tc sync
-│   │   ├── createTestPlan.js     # tc createTestPlan
-│   │   ├── report.js             # tc report
-│   │   └── specgen.js            # tc specgen
-│   └── ai/
-│       └── discovery.js          # AI-powered source code analysis for specgen
+│   └── commands/
+│       ├── featuresync.js        # tc sync
+│       ├── createTestPlan.js     # tc createTestPlan
+│       ├── report.js             # tc report
+│       └── getTestPlan.js        # tc getTestPlan
 ├── tests/
 │   ├── README.md                 # Testing strategy docs
 │   ├── utils/                    # Test helpers (git, API mocks, builders)
@@ -65,7 +59,9 @@ tc-cli/
 ├── samples/
 │   └── reports/                  # Sample Mochawesome & JUnit files
 ├── docs/
-│   └── specgen.md                # Specgen design notes
+│   ├── agentic-qa.md             # Agent-driven QA workflow
+│   ├── auto-create.md            # tc report --auto-create reference
+│   └── frameworks.md             # Per-framework setup for tc report
 ├── .github/workflows/
 │   └── release.yml               # CI/CD pipeline
 └── package.json
@@ -88,9 +84,7 @@ The package uses `"type": "module"`. This means:
 | `commander` | CLI argument parsing |
 | `simple-git` | Git operations (diff, log, status) |
 | `@cucumber/gherkin` | Gherkin `.feature` file parsing |
-| `@anthropic-ai/sdk` | Claude AI for specgen |
-| `@google/generative-ai` | Gemini AI for specgen |
-| `testcollab-sdk` | TestCollab API client (createTestPlan, report) |
+| `testcollab-sdk` | TestCollab API client (createTestPlan, report, getTestPlan) |
 | `testcollab-cypress-plugin` | Shared result upload logic (report) |
 
 ## Testing
@@ -154,14 +148,6 @@ Key details:
 4. Optionally extracts configuration IDs (`config-id-<id>`, `config-<id>`)
 5. Maps results: pass → 1, fail → 2, skip → 3
 6. Uploads results to the test plan via TestCollab API
-
-### `tc specgen` (specgen.js + ai/discovery.js)
-
-1. Scans source directory for `.ts`, `.tsx`, `.js`, `.jsx`, `.mjs`, `.cjs` files
-2. Sends file summaries to AI for **discovery** — identifies target families and targets
-3. Caches discovery results in `.testcollab/specgen.json`
-4. For each target, generates a `.feature` file with 2-4 scenarios using structured AI output
-5. Falls back to a template feature if AI generation fails
 
 ## Debugging
 

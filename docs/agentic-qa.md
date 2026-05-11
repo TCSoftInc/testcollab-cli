@@ -45,7 +45,6 @@ Every step is scriptable, so the whole loop can run in CI on a schedule, on ever
 | [`tc createTestPlan`](../README.md#tc-createtestplan) | Pre-create a plan in CI from a CI tag — useful when you want the agent to execute a fresh plan per build |
 | [`tc getTestPlan`](../README.md#tc-gettestplan) | **The agent's input.** Returns the plan as agent-friendly JSON with stripped HTML, mapped statuses, and per-configuration breakdowns |
 | [`tc report`](../README.md#tc-report) | **The agent's output.** Upload pass/fail/skip results as a JUnit or Mochawesome file |
-| [`tc specgen`](specgen.md) | **Discovery.** Generate `.feature` files from your source code with AI assistance — a starting point for humans to curate into test cases |
 | [`tc sync`](../README.md#tc-sync) | Keep TestCollab in sync with `.feature` files committed in Git — close the loop if you maintain test cases as code |
 
 ## End-to-end example
@@ -158,19 +157,6 @@ To run the same test against each configuration:
 - Set up the matching environment (launch the right browser, switch the plan, etc.)
 - In the result file, use the `config-id-<configId>` convention in the test name or classname — `tc report` will route results to the correct configuration slot. See [the README](../README.md#configuration-specific-runs) for the exact format per result type.
 
-## Discovery: generating starter test cases with `tc specgen`
-
-If you're starting from a codebase without a curated test plan, [`tc specgen`](specgen.md) crawls your source files and generates `.feature` files with scenarios you can then organize into test cases.
-
-```bash
-tc specgen --src ./src --out ./features
-```
-
-The output is **a starting point, not a finished plan** — review it, prune the noise, and shape it into something a human would care about reading. Then either:
-
-- Commit the `.feature` files and run [`tc sync`](../README.md#tc-sync) to push them to TestCollab, or
-- Copy the scenarios manually into TestCollab and curate from there.
-
 ## Keeping BDD specs in sync
 
 If you maintain test cases as `.feature` files in Git, [`tc sync`](../README.md#tc-sync) keeps TestCollab updated on every push:
@@ -199,5 +185,4 @@ This makes the agentic loop fully Git-driven: edits to `.feature` files flow to 
 
 - [`tc getTestPlan` reference](../README.md#tc-gettestplan)
 - [`tc report` reference](../README.md#tc-report)
-- [`tc specgen` reference](specgen.md)
 - [Framework setup for `tc report`](frameworks.md)
