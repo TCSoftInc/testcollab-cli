@@ -1569,6 +1569,9 @@ async function autoCreateTestPlan({ apiKey, apiUrl, projectId, parsedReport }) {
       customFields: []
     }
   });
+  if (newPlan && newPlan.status === false) {
+    throw new Error(newPlan.title || 'Failed to create test plan');
+  }
   console.log(`   ✓ Test Plan "${planTitle}" (id: ${newPlan.id})`);
 
   // 10. Bulk-add test cases by tag
