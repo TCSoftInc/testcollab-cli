@@ -1,6 +1,6 @@
-# Hermes Agent Integration
+# Agentic QA Testing
 
-Use [Hermes Agent](https://github.com/NousResearch/hermes-agent) as an on-demand QA agent that executes TestCollab test plans against a running web app via browser automation.
+Use AI agents to execute TestCollab test plans against a running web app via browser automation. This guide covers [Hermes Agent](https://github.com/NousResearch/hermes-agent), [Claude Code](https://docs.anthropic.com/en/docs/claude-code), and [Codex](https://openai.com/index/codex/).
 
 ## How it works
 
@@ -136,8 +136,54 @@ Results are mapped back to TestCollab test cases using the `[TC-ID]` convention 
 - **Provide credentials upfront.** Tell Hermes the login credentials in your prompt so it doesn't get stuck at authentication.
 - **Use staging, not production.** Agent-driven testing can modify data. Point at a staging or local environment.
 
+## Claude Code
+
+Claude Code has built-in browser automation via `playwright-cli`. No separate agent or skill installation needed.
+
+### Setup
+
+```bash
+git clone https://github.com/TCSoftInc/testcollab-cli.git
+cd testcollab-cli
+```
+
+The repo includes a custom slash command at `.claude/commands/run-qa.md`.
+
+### Run with Claude Code
+
+From the `testcollab-cli` directory:
+
+```bash
+claude
+```
+
+Then use the slash command:
+
+```
+/run-qa --project 16 --test-plan-id 555 --url http://localhost:3000
+```
+
+Or describe what you want in natural language — Claude Code will orchestrate `tc getTestPlan`, `playwright-cli` for browser interaction, JUnit XML generation, and `tc report` upload.
+
+## Codex
+
+Codex's sandbox blocks browser processes (`EPERM` on `listen()` syscall), so it cannot execute browser-based QA directly. Use Codex to **generate Playwright test scripts** from your test plans:
+
+```bash
+codex exec "Read the test plan at /tmp/tc-plan.json. \
+  For each test case, generate a Playwright test in TypeScript with [TC-<id>] prefixes. \
+  Write tests to /tmp/tc-tests.spec.ts."
+```
+
+Then run the generated tests and upload results separately:
+
+```bash
+npx playwright test /tmp/tc-tests.spec.ts --reporter=junit > /tmp/results.xml
+tc report --project 16 --test-plan-id 555 --format junit --result-file /tmp/results.xml
+```
+
 ## Related
 
-- [Agentic QA Guide](agentic-qa.md) — general agent-driven QA patterns (not Hermes-specific)
+- [Agentic QA Guide](agentic-qa.md) — general agent-driven QA patterns
 - [tc getTestPlan reference](../README.md#tc-gettestplan)
 - [tc report reference](../README.md#tc-report)
