@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
-# Install the testcollab-qa skill into Hermes Agent
-# Usage: bash install.sh
+# Install the testcollab-qa skill into Hermes Agent.
+# Works both ways:
+#   curl -fsSL <raw-url>/install.sh | bash       # piped install (from anywhere)
+#   bash install.sh                              # from a cloned repo
 
 set -euo pipefail
 
 SKILL_DIR="$HOME/.hermes/skills/software-development/testcollab-qa"
-SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+RAW_BASE="https://raw.githubusercontent.com/TCSoftInc/testcollab-cli/main/hermes-skill/testcollab-qa"
+LOCAL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." 2>/dev/null && pwd || echo "")"
 
 echo "Installing testcollab-qa skill for Hermes Agent..."
 
@@ -15,8 +18,19 @@ if [ ! -d "$HOME/.hermes" ]; then
   exit 1
 fi
 
-mkdir -p "$SKILL_DIR"
-cp "$SCRIPT_DIR/SKILL.md" "$SKILL_DIR/SKILL.md"
+mkdir -p "$SKILL_DIR/scripts"
+
+# If the SKILL.md is next to us locally (cloned repo), copy from disk.
+# Otherwise, fetch from GitHub raw (piped install case).
+if [ -n "$LOCAL_DIR" ] && [ -f "$LOCAL_DIR/SKILL.md" ]; then
+  cp "$LOCAL_DIR/SKILL.md" "$SKILL_DIR/SKILL.md"
+  cp "$LOCAL_DIR/scripts/run-qa.sh" "$SKILL_DIR/scripts/run-qa.sh"
+else
+  curl -fsSL "$RAW_BASE/SKILL.md" -o "$SKILL_DIR/SKILL.md"
+  curl -fsSL "$RAW_BASE/scripts/run-qa.sh" -o "$SKILL_DIR/scripts/run-qa.sh"
+fi
+
+chmod +x "$SKILL_DIR/scripts/run-qa.sh"
 
 echo "Skill installed to $SKILL_DIR"
 
@@ -26,11 +40,12 @@ if ! command -v tc &>/dev/null; then
   echo "  npm install -g @testcollab/cli"
 fi
 
-if [ -z "${TESTCOLLAB_TOKEN:-}" ]; then
+if [ -z "${TESTCOLLAB_TOKEN:-}" ] && [ ! -f "$HOME/.hermes/.env" ]; then
   echo ""
   echo "Note: TESTCOLLAB_TOKEN is not set. Add it to ~/.hermes/.env:"
   echo "  echo 'TESTCOLLAB_TOKEN=your-token-here' >> ~/.hermes/.env"
 fi
 
 echo ""
-echo "Done. Start Hermes and say: 'Run the test plan for project X, plan Y against http://localhost:3000'"
+echo "Done. cd into your app's project dir, run 'hermes', and say:"
+echo "  'Execute test plan <id> in project <id> against http://localhost:3000'"
