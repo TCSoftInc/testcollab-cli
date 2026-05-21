@@ -78,30 +78,17 @@ Hermes will:
 4. Generate a JUnit XML result file
 5. Upload results via `tc report`
 
-### Scripted (one-shot)
+### Non-interactive (one-shot)
 
-Use the provided run script for CI or automation:
-
-```bash
-bash hermes-skill/testcollab-qa/scripts/run-qa.sh \
-  --project 16 \
-  --test-plan-id 555 \
-  --url http://localhost:3000
-```
-
-### Non-interactive (Hermes prompt mode)
+For CI or automation, pass the prompt inline. Hermes auto-loads the installed `testcollab-qa` skill from its description:
 
 ```bash
-hermes --prompt "Execute the TestCollab test plan for project 16, plan 555 \
-  against http://localhost:3000. Login: user@example.com / pass123. \
-  Follow the testcollab-qa skill. Write results to /tmp/results.xml."
+hermes -z "Execute the TestCollab test plan for project 16, plan 555 \
+  against http://localhost:3000. Login: user@example.com / pass123." \
+  --accept-hooks
 ```
 
-Then upload results:
-
-```bash
-tc report --project 16 --test-plan-id 555 --format junit --result-file /tmp/results.xml
-```
+`hermes chat -q "..."` works the same way if you prefer the subcommand form.
 
 ## What Hermes does during execution
 
@@ -138,49 +125,54 @@ Results are mapped back to TestCollab test cases using the `[TC-ID]` convention 
 
 ## Claude Code
 
-Claude Code has built-in browser automation via `playwright-cli`. No separate agent or skill installation needed.
-
-### Setup
+Claude Code has built-in browser automation via `playwright-cli`. Install the TestCollab QA skill into Claude Code's user-global skills directory once:
 
 ```bash
-git clone https://github.com/TCSoftInc/testcollab-cli.git
-cd testcollab-cli
+bash claude-code-skill/testcollab-qa/scripts/install.sh
 ```
 
-The repo includes a custom slash command at `.claude/commands/run-qa.md`.
+This copies `SKILL.md` to `~/.claude/skills/testcollab-qa/`.
 
 ### Run with Claude Code
 
-From the `testcollab-cli` directory:
+From your app's project directory (**not** `testcollab-cli`):
 
 ```bash
+cd ~/your-app
 claude
 ```
 
-Then use the slash command:
+Then prompt naturally:
 
 ```
-/run-qa --project 16 --test-plan-id 555 --url http://localhost:3000
+Execute test plan 555 in project 16 against http://localhost:3000.
+Login: user@example.com / pass123.
 ```
 
-Or describe what you want in natural language — Claude Code will orchestrate `tc getTestPlan`, `playwright-cli` for browser interaction, JUnit XML generation, and `tc report` upload.
+Claude Code matches the prompt to the `testcollab-qa` skill via its description and orchestrates `tc getTestPlan`, `playwright-cli`, JUnit XML generation, and `tc report` upload.
+
+For CI: `claude -p "Execute test plan 555 in project 16 against http://staging.example.com. Login: ..."`
 
 ## Codex
 
-Codex's sandbox blocks browser processes (`EPERM` on `listen()` syscall), so it cannot execute browser-based QA directly. Use Codex to **generate Playwright test scripts** from your test plans:
+Codex has full shell access and a skill system, so it can drive a browser the same way. Install the skill:
 
 ```bash
-codex exec "Read the test plan at /tmp/tc-plan.json. \
-  For each test case, generate a Playwright test in TypeScript with [TC-<id>] prefixes. \
-  Write tests to /tmp/tc-tests.spec.ts."
+bash codex-skill/testcollab-qa/scripts/install.sh
 ```
 
-Then run the generated tests and upload results separately:
+This copies `SKILL.md` to `~/.codex/skills/testcollab-qa/`. Restart Codex to pick it up.
+
+### Run with Codex
 
 ```bash
-npx playwright test /tmp/tc-tests.spec.ts --reporter=junit > /tmp/results.xml
-tc report --project 16 --test-plan-id 555 --format junit --result-file /tmp/results.xml
+cd ~/your-app
+codex
 ```
+
+Then prompt naturally, same as the other two agents. For CI: `codex exec "Execute test plan 555 in project 16 against http://staging.example.com. ..."`
+
+**Sandbox note:** Codex's default sandbox blocks new listening sockets, which `playwright-cli` needs to launch a browser. Run with `--full-auto` (or the equivalent escalation flag for your Codex version) so the browser process can start.
 
 ## Related
 

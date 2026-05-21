@@ -18,19 +18,15 @@ if [ ! -d "$HOME/.hermes" ]; then
   exit 1
 fi
 
-mkdir -p "$SKILL_DIR/scripts"
+mkdir -p "$SKILL_DIR"
 
 # If the SKILL.md is next to us locally (cloned repo), copy from disk.
 # Otherwise, fetch from GitHub raw (piped install case).
 if [ -n "$LOCAL_DIR" ] && [ -f "$LOCAL_DIR/SKILL.md" ]; then
   cp "$LOCAL_DIR/SKILL.md" "$SKILL_DIR/SKILL.md"
-  cp "$LOCAL_DIR/scripts/run-qa.sh" "$SKILL_DIR/scripts/run-qa.sh"
 else
   curl -fsSL "$RAW_BASE/SKILL.md" -o "$SKILL_DIR/SKILL.md"
-  curl -fsSL "$RAW_BASE/scripts/run-qa.sh" -o "$SKILL_DIR/scripts/run-qa.sh"
 fi
-
-chmod +x "$SKILL_DIR/scripts/run-qa.sh"
 
 echo "Skill installed to $SKILL_DIR"
 
@@ -47,5 +43,5 @@ if [ -z "${TESTCOLLAB_TOKEN:-}" ] && [ ! -f "$HOME/.hermes/.env" ]; then
 fi
 
 echo ""
-echo "Done. cd into your app's project dir, run 'hermes', and say:"
-echo "  'Execute test plan <id> in project <id> against http://localhost:3000'"
+echo "Done. cd into your app's project dir, run 'hermes', then prompt naturally:"
+echo "  Execute test plan <id> in project <id> against http://localhost:3000"

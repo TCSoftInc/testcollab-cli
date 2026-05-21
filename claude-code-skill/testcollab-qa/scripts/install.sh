@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
-# Install the testcollab-qa /run-qa slash command into Claude Code (user-global).
+# Install the testcollab-qa skill into Claude Code (user-global).
 # Works both ways:
 #   curl -fsSL <raw-url>/install.sh | bash       # piped install (from anywhere)
 #   bash install.sh                              # from a cloned repo
 
 set -euo pipefail
 
-COMMANDS_DIR="$HOME/.claude/commands"
-TARGET="$COMMANDS_DIR/run-qa.md"
-RAW_URL="https://raw.githubusercontent.com/TCSoftInc/testcollab-cli/main/claude-code-skill/testcollab-qa/run-qa.md"
-LOCAL_FILE="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." 2>/dev/null && pwd || echo "")/run-qa.md"
+SKILL_DIR="$HOME/.claude/skills/testcollab-qa"
+TARGET="$SKILL_DIR/SKILL.md"
+RAW_URL="https://raw.githubusercontent.com/TCSoftInc/testcollab-cli/main/claude-code-skill/testcollab-qa/SKILL.md"
+LOCAL_FILE="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." 2>/dev/null && pwd || echo "")/SKILL.md"
 
-echo "Installing /run-qa slash command for Claude Code..."
+echo "Installing testcollab-qa skill for Claude Code..."
 
-mkdir -p "$COMMANDS_DIR"
+mkdir -p "$SKILL_DIR"
 
 # Prefer local file if running from a cloned repo; otherwise fetch from GitHub raw.
 if [ -f "$LOCAL_FILE" ]; then
@@ -22,7 +22,7 @@ else
   curl -fsSL "$RAW_URL" -o "$TARGET"
 fi
 
-echo "Slash command installed to $TARGET"
+echo "Skill installed to $TARGET"
 
 if ! command -v claude &>/dev/null; then
   echo ""
@@ -43,5 +43,5 @@ if [ -z "${TESTCOLLAB_TOKEN:-}" ]; then
 fi
 
 echo ""
-echo "Done. cd into your app's project dir, run 'claude', then:"
-echo "  /run-qa --project <id> --test-plan-id <id> --url http://localhost:3000"
+echo "Done. cd into your app's project dir, run 'claude', then prompt naturally:"
+echo "  Execute test plan <id> in project <id> against http://localhost:3000"
