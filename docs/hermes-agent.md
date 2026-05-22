@@ -89,13 +89,17 @@ bash hermes-skill/testcollab-qa/scripts/run-qa.sh \
   --url http://localhost:3000
 ```
 
-### Non-interactive (Hermes prompt mode)
+### Non-interactive (Hermes one-shot mode)
 
 ```bash
-hermes --prompt "Execute the TestCollab test plan for project 16, plan 555 \
+hermes --oneshot "Execute the TestCollab test plan for project 16, plan 555 \
   against http://localhost:3000. Login: user@example.com / pass123. \
-  Follow the testcollab-qa skill. Write results to /tmp/results.xml."
+  Follow the testcollab-qa skill. Write results to /tmp/results.xml." \
+  --skills testcollab-qa
 ```
+
+Older Hermes versions may use `--prompt` instead of `--oneshot`. The provided `run-qa.sh`
+script checks the installed Hermes CLI and selects the supported option automatically.
 
 Then upload results:
 

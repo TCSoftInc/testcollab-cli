@@ -59,7 +59,23 @@ echo "   Found $CASE_COUNT test cases"
 echo ""
 
 echo "Step 2: Launching Hermes to execute test cases..."
-hermes --prompt "Execute the TestCollab test plan at $PLAN_FILE against the app at $APP_URL. Follow the testcollab-qa skill procedure. Write JUnit XML results to $RESULT_FILE. Do not run tc report — I will handle that." --accept-hooks 2>&1
+HERMES_VERSION="$(hermes --version 2>/dev/null | head -n 1 || true)"
+HERMES_HELP="$(hermes --help 2>&1 || true)"
+HERMES_PROMPT="Execute the TestCollab test plan at $PLAN_FILE against the app at $APP_URL. Follow the testcollab-qa skill procedure. Write JUnit XML results to $RESULT_FILE. Do not run tc report — I will handle that."
+
+echo "   Hermes: ${HERMES_VERSION:-unknown version}"
+case "$HERMES_HELP" in
+  *"--oneshot"*)
+    hermes --oneshot "$HERMES_PROMPT" --accept-hooks --skills testcollab-qa 2>&1
+    ;;
+  *"--prompt"*)
+    hermes --prompt "$HERMES_PROMPT" --accept-hooks 2>&1
+    ;;
+  *)
+    echo "Error: Unsupported Hermes CLI. Expected --oneshot or --prompt support."
+    exit 1
+    ;;
+esac
 
 echo ""
 echo "Step 3: Uploading results..."
