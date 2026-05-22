@@ -57,6 +57,18 @@ This copies the skill to `~/.hermes/skills/software-development/testcollab-qa/`.
 
 ## Usage
 
+### Scripted
+
+Use the provided runner for CI or automation. It detects the installed Hermes
+CLI and uses `--oneshot` for newer versions or `--prompt` for older versions.
+
+```bash
+bash hermes-skill/testcollab-qa/scripts/run-qa.sh \
+  --project 16 \
+  --test-plan-id 555 \
+  --url http://localhost:3000
+```
+
 ### Interactive (chat with Hermes)
 
 Start Hermes and ask it to run a test plan:
@@ -89,6 +101,10 @@ hermes -z "Execute the TestCollab test plan for project 16, plan 555 \
 ```
 
 `hermes chat -q "..."` works the same way if you prefer the subcommand form.
+
+Older Hermes versions may use `--prompt` instead of `--oneshot` / `-z`. The
+provided `run-qa.sh` script checks the installed Hermes CLI and selects the
+supported option automatically.
 
 ## What Hermes does during execution
 
