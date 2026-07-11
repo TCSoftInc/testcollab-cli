@@ -370,7 +370,7 @@ jobs:
       - run: npm install -g @testcollab/cli && npm ci
 
       # Run your tests (example: Playwright with JUnit output)
-      - run: npx playwright test --reporter=junit --output=results.xml
+      - run: PLAYWRIGHT_JUNIT_OUTPUT_NAME=results.xml npx playwright test --reporter=junit
 
       # Upload results — auto-creates everything in TestCollab
       - run: |
@@ -472,7 +472,7 @@ test-and-report:
   before_script:
     - npm install -g @testcollab/cli && npm ci
   script:
-    - npx playwright test --reporter=junit --output=results.xml
+    - PLAYWRIGHT_JUNIT_OUTPUT_NAME=results.xml npx playwright test --reporter=junit
     - tc report --project $TC_PROJECT_ID --format junit --result-file results.xml --auto-create
 ```
 
