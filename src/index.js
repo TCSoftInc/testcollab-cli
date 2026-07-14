@@ -12,6 +12,7 @@ import { featuresync } from './commands/featuresync.js';
 import { createTestPlan } from './commands/createTestPlan.js';
 import { report } from './commands/report.js';
 import { getTestPlan } from './commands/getTestPlan.js';
+import { gate } from './commands/gate.js';
 
 // Initialize commanderq
 const program = new Command();
@@ -65,6 +66,24 @@ program
   .option('--api-url <url>', 'TestCollab API base URL', 'https://api.testcollab.io')
   .option('--output <path>', 'Write JSON to file instead of stdout')
   .action(getTestPlan);
+
+// Add gate command
+program
+  .command('gate')
+  .description('Evaluate a Test Plan\'s results and fail the build (exit non-zero) when the quality gate is not met')
+  .option('--api-key <key>', 'TestCollab API key (or set TESTCOLLAB_TOKEN env var)')
+  .requiredOption('--project <id>', 'TestCollab project ID')
+  .requiredOption('--test-plan-id <id>', 'Test Plan ID to evaluate')
+  .option('--fail-on <statuses>', 'Comma-separated statuses that fail the gate', 'failed')
+  .option('--max-failed <n>', 'Allow up to N cases in --fail-on statuses before failing', '0')
+  .option('--min-pass-rate <pct>', 'Fail if the pass rate (passed / executed) is below this percent')
+  .option('--require-complete', 'Fail if any case in the run is still unexecuted', false)
+  .option('--config <id>', 'Evaluate a single Test Plan configuration')
+  .option('--regression <id>', 'Evaluate a specific run/regression (default: latest)')
+  .option('--wait <seconds>', 'Poll until the run has no unexecuted cases, up to this many seconds', '0')
+  .option('--poll-interval <seconds>', 'Seconds between polls when --wait is set', '15')
+  .option('--api-url <url>', 'TestCollab API base URL override', 'https://api.testcollab.io')
+  .action(gate);
 
 // Parse command line arguments and execute the program
 program.parse(process.argv);
