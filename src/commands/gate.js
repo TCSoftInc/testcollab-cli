@@ -284,7 +284,7 @@ export async function gate(options) {
     }
 
     const execEndpoint = () => {
-      let endpoint = `/executedtestcases?test_plan=${testPlanId}&regression=${regressionId}&_limit=-1`;
+      let endpoint = `/executedtestcases?project=${projectId}&test_plan=${testPlanId}&regression=${regressionId}&_limit=-1`;
       if (configId !== null) {
         endpoint += `&test_plan_config=${configId}`;
       }
