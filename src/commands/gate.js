@@ -270,6 +270,7 @@ export async function gate(options) {
 
     // TCV-6668: resolve the run (regression) to evaluate — latest by default.
     let regressionId = regressionOption;
+    let regressionNumber = 0;
     if (regressionId === null) {
       const runs = await apiGet(
         baseApiUrl,
@@ -281,6 +282,7 @@ export async function gate(options) {
         process.exit(2);
       }
       regressionId = runs[0].id;
+      regressionNumber = runs[0].iteration || 0;
     }
 
     const execEndpoint = () => {
@@ -317,7 +319,7 @@ export async function gate(options) {
 
     const label = planTitle ? `#${testPlanId} "${planTitle}"` : `#${testPlanId}`;
     console.log(
-      `ℹ️  Test plan ${label} — run #${regressionId}` +
+      `ℹ️  Test plan ${label} — run #${regressionNumber}` +
         `${configId !== null ? ` · config ${configId}` : ''}`
     );
     console.log(`   ${formatCounts(summary)}  (${verdict.total} total)`);
