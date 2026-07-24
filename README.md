@@ -42,6 +42,7 @@ tc sync --project 123
 | [`tc createTestPlan`](#tc-createtestplan) | Create a test plan and assign tagged cases |
 | [`tc getTestPlan`](#tc-gettestplan) | Fetch a test plan as JSON for agent-driven execution |
 | [`tc report`](#tc-report) | Upload Mochawesome or JUnit results (with `--auto-create` or to an existing plan) |
+| [`tc gate`](#tc-gate) | Fail the CI build unless a Test Plan's results meet the quality gate |
 | [`tc sync`](#tc-sync) | Sync `.feature` files from Git to TestCollab (designed for CI/CD, works locally too) |
 
 The simplest workflow is **run your tests → `report --auto-create`**. For more control, use **createTestPlan → run your tests → report**. For agent-driven execution of human-curated test plans, see the [Agentic QA Guide](docs/agentic-qa.md). To use [Hermes Agent](https://github.com/NousResearch/hermes-agent) as your QA executor with browser automation, see the [Hermes Agent Integration](docs/hermes-agent.md).
@@ -267,6 +268,65 @@ Any framework that can produce **Mochawesome JSON** or **JUnit XML** works with 
 | **Kaspresso / Kotlin** | JUnit XML (inherits from JUnit runner) | `junit` |
 
 For detailed setup instructions per framework, see [Framework Setup Guide](docs/frameworks.md).
+
+---
+
+### `tc gate`
+
+Turn a TestCollab Test Plan into a **quality gate** for your pipeline. `tc gate` reads the plan's latest run results via the API and **exits non-zero when the gate is not met**, which fails the surrounding CI step (Azure DevOps, Jenkins, GitLab CI, Ansible, …).
+
+```bash
+tc gate --project <id> --test-plan-id <id> [--fail-on <statuses>] [options]
+```
+
+The minimum gate — any failing test case fails the build:
+
+```bash
+tc gate --project 45 --test-plan-id 123 --fail-on failed
+```
+
+| Option | Required | Default | Description |
+|--------|----------|---------|-------------|
+| `--project <id>` | Yes | — | TestCollab project ID |
+| `--test-plan-id <id>` | Yes | — | Test Plan to evaluate |
+| `--fail-on <statuses>` | No | `failed` | Comma-separated statuses that fail the gate (e.g. `failed,blocked`). User-defined statuses are supported. |
+| `--max-failed <n>` | No | `0` | Tolerate up to N cases in `--fail-on` statuses before failing |
+| `--min-pass-rate <pct>` | No | — | Fail if the pass rate (`passed / executed`) is below this percent |
+| `--require-complete` | No | off | Fail if any case in the run is still unexecuted |
+| `--config <id>` | No | — | Evaluate a single Test Plan configuration |
+| `--regression <id>` | No | latest | Evaluate a specific run/regression |
+| `--wait <seconds>` | No | `0` | Poll until the run has no unexecuted cases, up to this many seconds (for "hold the deploy until QA finishes") |
+| `--poll-interval <seconds>` | No | `15` | Seconds between polls when `--wait` is set |
+| `--api-key <key>` | No | — | API key (or set `TESTCOLLAB_TOKEN`) |
+| `--api-url <url>` | No | `https://api.testcollab.io` | API base URL (use `https://api-eu.testcollab.io` for EU) |
+
+**Exit codes:** `0` gate passed · `1` gate failed · `2` usage / API error.
+
+Results are read **live** from the executed test cases of the plan's latest run, so the gate is correct immediately after a `tc report` upload in the same pipeline.
+
+#### Example output
+
+```
+ℹ️  Test plan #123 "Checkout flow" — run #7
+   unexecuted: 0 · passed: 10 · failed: 2 · skipped: 1 · blocked: 0  (13 total)
+❌ Quality gate FAILED
+   - 2 case(s) with status [failed]
+```
+
+#### Typical pipeline: run tests → report → gate
+
+```bash
+# 1. run your automated tests → JUnit/xUnit results
+npx playwright test --reporter=junit
+
+# 2. push the results into a TestCollab plan
+tc report --project 45 --test-plan-id 123 --format junit --result-file results.xml
+
+# 3. gate the build on the plan's results
+tc gate --project 45 --test-plan-id 123 --fail-on failed --require-complete
+```
+
+See the [Azure DevOps quality gate guide](docs/azure-devops-quality-gate.md) for a full pipeline and an Ansible Tower example.
 
 ---
 
@@ -509,6 +569,54 @@ sync-features:
     changes:
       - "**/*.feature"
 ```
+
+### Azure DevOps
+
+Use TestCollab as a **quality gate** in an Azure Pipelines YAML pipeline: report your automated results, then gate the build on the plan's outcome. Because `tc gate` returns a non-zero exit code when the gate fails, Azure DevOps fails the step automatically — no extra configuration needed.
+
+```yaml
+trigger:
+  branches: { include: [main] }
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  - group: testcollab        # variable group holding TESTCOLLAB_TOKEN (mark it secret)
+  - name: TC_PROJECT
+    value: '45'
+  - name: TC_PLAN
+    value: '123'
+
+steps:
+  - task: NodeTool@0
+    inputs: { versionSpec: '22.x' }
+
+  - script: npm install -g @testcollab/cli && npm ci
+    displayName: Install CLI & deps
+
+  # run your tests → JUnit results
+  - script: npx playwright test --reporter=junit
+    displayName: Run tests
+
+  # push results into the TestCollab plan
+  - script: >
+      tc report --project $(TC_PROJECT) --test-plan-id $(TC_PLAN)
+      --format junit --result-file results.xml
+    displayName: Report results to TestCollab
+    env: { TESTCOLLAB_TOKEN: $(TESTCOLLAB_TOKEN) }
+
+  # the quality gate — fails the pipeline if the plan has any failing case
+  - script: >
+      tc gate --project $(TC_PROJECT) --test-plan-id $(TC_PLAN)
+      --fail-on failed --require-complete
+    displayName: TestCollab quality gate
+    env: { TESTCOLLAB_TOKEN: $(TESTCOLLAB_TOKEN) }
+```
+
+Store `TESTCOLLAB_TOKEN` as a **secret** variable (a variable group or Azure Key Vault). For a deployment gate ("hold the release until manual QA is green"), add `--wait <seconds>` so the gate polls until the plan's run is complete before evaluating.
+
+See the [Azure DevOps quality gate guide](docs/azure-devops-quality-gate.md) for the full walkthrough, granular gate criteria, and an **Ansible Tower** example.
 
 ---
 
