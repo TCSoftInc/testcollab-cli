@@ -32,6 +32,10 @@ jobs:
           registry-url: https://registry.npmjs.org
           cache: npm
 
+      # TCV-6668: OIDC trusted publishing needs npm >= 11.5.1; Node 22 ships ~10.9.
+      - name: Upgrade npm for OIDC trusted publishing
+        run: npm install -g npm@latest
+
       - name: Bump version
         if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'release'
         run: node scripts/bump-version.js
@@ -44,8 +48,9 @@ jobs:
 
 
 
+      # TCV-6668: authenticate via OIDC trusted publishing (configured on npmjs.com),
+      # not a long-lived NPM_TOKEN — npm is deprecating 2FA-bypass tokens. The job's
+      # id-token: write permission supplies the OIDC identity; provenance is automatic.
       - name: Publish to npm
         if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'release'
         run: npm publish --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
