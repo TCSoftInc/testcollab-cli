@@ -1715,6 +1715,20 @@ export async function report(options) {
       effectiveTestPlanId = autoResult.testPlanId;
     }
 
+    // Persist the resolved test plan id so a later CI step (e.g. `tc gate`) can
+    // read it without hardcoding it. Mirrors createTestPlan.js, and applies to
+    // both --auto-create (new plan) and --test-plan-id (existing plan).
+    if (effectiveTestPlanId) {
+      try {
+        if (!fs.existsSync('tmp')) {
+          fs.mkdirSync('tmp', { recursive: true });
+        }
+        fs.writeFileSync('tmp/tc_test_plan', `TESTCOLLAB_TEST_PLAN_ID=${effectiveTestPlanId}`);
+      } catch (e) {
+        // Non-fatal; continue
+      }
+    }
+
     // Upload results
     console.log(`🚀 Uploading ${formatLabel} test run result to TestCollab...`);
     const summary = await uploadUsingReporterFlow({
