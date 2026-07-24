@@ -11,10 +11,13 @@ the exact same gate works unchanged in Jenkins, GitLab CI, GitHub Actions, or an
 
 ## How it works
 
-1. Your pipeline runs automated tests and produces a JUnit/xUnit (or Mochawesome)
+1. `tc createTestPlan` creates a Test Plan from your CI-tagged cases and prints its
+   **ID** (also written to `tmp/tc_test_plan`). Run it once, or fresh on every
+   pipeline run — see [Create the Test Plan](#create-the-test-plan-one-command).
+2. Your pipeline runs automated tests and produces a JUnit/xUnit (or Mochawesome)
    result file.
-2. `tc report` pushes those results into a TestCollab Test Plan.
-3. `tc gate` reads the plan's **latest run** results via the REST API and exits:
+3. `tc report` pushes those results into that Test Plan.
+4. `tc gate` reads the plan's **latest run** results via the REST API and exits:
    - `0` — gate passed (the pipeline step succeeds),
    - `1` — gate failed (Azure DevOps fails the step automatically),
    - `2` — usage/API error (bad token, plan not found, plan never run, …).
@@ -28,12 +31,41 @@ not depend on any cached summary).
 - A TestCollab **API token** — TestCollab → Account Settings → API Tokens. Store it
   as a **secret** pipeline variable (a variable group or Azure Key Vault), exposed to
   the gate step as the `TESTCOLLAB_TOKEN` environment variable.
-- The **project ID** and **Test Plan ID** you want to gate on.
+- The **project ID** to work in.
+- To create the plan from the pipeline: a **CI tag ID** (tag the cases you want in the
+  plan) and an **assignee user ID**. If you instead gate an existing plan, you only
+  need its **Test Plan ID**.
 - Node.js available on the agent (`NodeTool@0`) to run the CLI.
 
-## Pattern A — gate a build (run tests → report → gate)
+## Create the Test Plan (one command)
 
-The pipeline runs the tests, reports them, and gates on the result — all in one run.
+`tc createTestPlan` creates a plan, fills it with the test cases carrying your CI tag,
+assigns it, and prints the new **Test Plan ID**. It also writes the ID to
+`tmp/tc_test_plan` in `KEY=VALUE` form, so a pipeline can read it back without parsing
+stdout:
+
+```bash
+tc createTestPlan --project 45 --ci-tag-id 88 --assignee-id 12
+#  → Test Plan ID: 123
+#  → writes tmp/tc_test_plan   (contents: TESTCOLLAB_TEST_PLAN_ID=123)
+```
+
+Creating the plan also starts its **first run**, so `tc report` and `tc gate` can act
+on it right away. Two ways to use it:
+
+- **Fresh plan per pipeline run** (self-contained, one plan per build) — call
+  `createTestPlan` in the pipeline and pass the captured ID to `report`/`gate`, as in
+  Pattern A below.
+- **One long-lived plan** — run `createTestPlan` once, then store the printed ID as a
+  pipeline variable / `TC_PLAN` and reuse it across builds.
+
+The plan is titled `CI Test: <date>`; edit `createTestPlan` args or the plan in the UI
+if you need a different title or case selection.
+
+## Pattern A — create the plan, run tests, report, and gate
+
+One self-contained run: create the plan, capture its ID, run the tests, report them,
+and gate on the result.
 
 ```yaml
 trigger:
@@ -46,8 +78,10 @@ variables:
   - group: testcollab        # holds TESTCOLLAB_TOKEN (secret)
   - name: TC_PROJECT
     value: '45'
-  - name: TC_PLAN
-    value: '123'
+  - name: TC_TAG
+    value: '88'              # CI tag — which cases go into the plan
+  - name: TC_ASSIGNEE
+    value: '12'              # user the plan is assigned to
 
 steps:
   - task: NodeTool@0
@@ -55,6 +89,16 @@ steps:
 
   - script: npm install -g @testcollab/cli && npm ci
     displayName: Install CLI & deps
+
+  # Create the plan and expose its ID to later steps as $(TC_PLAN).
+  # createTestPlan writes tmp/tc_test_plan (TESTCOLLAB_TEST_PLAN_ID=<id>) on success.
+  - script: |
+      set -e
+      tc createTestPlan --project $(TC_PROJECT) --ci-tag-id $(TC_TAG) --assignee-id $(TC_ASSIGNEE)
+      source tmp/tc_test_plan
+      echo "##vso[task.setvariable variable=TC_PLAN]$TESTCOLLAB_TEST_PLAN_ID"
+    displayName: Create TestCollab test plan
+    env: { TESTCOLLAB_TOKEN: $(TESTCOLLAB_TOKEN) }
 
   - script: npx playwright test --reporter=junit
     displayName: Run tests
@@ -71,6 +115,9 @@ steps:
     displayName: TestCollab quality gate
     env: { TESTCOLLAB_TOKEN: $(TESTCOLLAB_TOKEN) }
 ```
+
+> Already have a plan? Skip the create step, drop the `TC_TAG`/`TC_ASSIGNEE` variables,
+> and set `TC_PLAN` to the existing Test Plan ID.
 
 ## Pattern B — gate a deployment (hold the release until QA is green)
 
