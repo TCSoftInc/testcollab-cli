@@ -166,6 +166,8 @@ tc report --project <id> --test-plan-id <id> --format <mochawesome|junit> --resu
 
 > \* Either `--test-plan-id` or `--auto-create` is required (they are mutually exclusive).
 
+**Output:** Writes the resolved test plan id to `tmp/tc_test_plan` as `TESTCOLLAB_TEST_PLAN_ID=<id>` for both modes (the `--auto-create` plan or the `--test-plan-id` you passed). A later CI step can source it, so `tc report --auto-create` can be followed by `tc gate` without hardcoding the plan id.
+
 #### `--auto-create`
 
 The zero-setup option for CI pipelines. When `--auto-create` is passed instead of `--test-plan-id`, the CLI parses your result file and automatically creates everything needed in TestCollab:
