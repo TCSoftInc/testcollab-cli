@@ -1,13 +1,14 @@
 /**
  * Tests for the `tc gate` command's pure evaluation logic (TCV-6668).
  *
- * These cover the two pieces that decide pass/fail without any network I/O:
- *   - summarize()    — count executed test cases by status
- *   - evaluateGate() — apply the gate criteria to a result summary
- *   - parseFailOn()  — parse the --fail-on option
+ * These cover the pieces that decide pass/fail without any network I/O:
+ *   - summarize()           — count executed test cases by status
+ *   - reconcileUnexecuted() — derive unexecuted from the plan's real case count
+ *   - evaluateGate()        — apply the gate criteria to a result summary
+ *   - parseFailOn()         — parse the --fail-on option
  */
 
-import { summarize, evaluateGate, parseFailOn } from '../src/commands/gate.js';
+import { summarize, evaluateGate, parseFailOn, reconcileUnexecuted } from '../src/commands/gate.js';
 
 describe('parseFailOn', () => {
   test('defaults to ["failed"] when unset', () => {
@@ -151,5 +152,47 @@ describe('evaluateGate', () => {
     expect(v.passed).toBe(false);
     // one for failures, one for unexecuted, one for pass rate
     expect(v.reasons.length).toBe(3);
+  });
+});
+
+describe('reconcileUnexecuted', () => {
+  test('derives unexecuted from the planned total, ignoring stale unexecuted rows', () => {
+    // Vishal's case: a run returned 204 passed + 54 literal "unexecuted" rows,
+    // but the plan actually has 204 cases → real unexecuted is 0.
+    const raw = { passed: 204, failed: 0, blocked: 0, skipped: 0, unexecuted: 54 };
+    const fixed = reconcileUnexecuted(raw, 204);
+    expect(fixed.unexecuted).toBe(0);
+    expect(fixed.passed).toBe(204);
+  });
+
+  test('reports genuine unexecuted when the plan has more cases than executed', () => {
+    const raw = { passed: 200, failed: 0, blocked: 0, skipped: 0, unexecuted: 0 };
+    const fixed = reconcileUnexecuted(raw, 258); // 258 planned, 200 executed
+    expect(fixed.unexecuted).toBe(58);
+  });
+
+  test('counts every non-unexecuted status (incl. custom) as executed', () => {
+    const raw = { passed: 5, failed: 2, blocked: 1, skipped: 1, needs_review: 1, unexecuted: 99 };
+    const fixed = reconcileUnexecuted(raw, 10); // 5+2+1+1+1 = 10 executed
+    expect(fixed.unexecuted).toBe(0);
+  });
+
+  test('never goes negative when executed exceeds the planned total', () => {
+    const fixed = reconcileUnexecuted({ passed: 12, unexecuted: 0 }, 10);
+    expect(fixed.unexecuted).toBe(0);
+  });
+
+  test('keeps the literal count when the planned total is unknown', () => {
+    const raw = { passed: 5, failed: 0, unexecuted: 3 };
+    expect(reconcileUnexecuted(raw, null).unexecuted).toBe(3);
+    expect(reconcileUnexecuted(raw, undefined).unexecuted).toBe(3);
+    expect(reconcileUnexecuted(raw, NaN).unexecuted).toBe(3);
+  });
+
+  test('returns a new object (does not mutate input)', () => {
+    const raw = { passed: 1, unexecuted: 9 };
+    const fixed = reconcileUnexecuted(raw, 1);
+    expect(fixed).not.toBe(raw);
+    expect(raw.unexecuted).toBe(9);
   });
 });

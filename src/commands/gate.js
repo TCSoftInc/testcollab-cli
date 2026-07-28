@@ -10,7 +10,9 @@
  * Results are computed LIVE from the executed test cases of the plan's latest run
  * (regression) — deliberately NOT from the plan's cached `results` summary, which
  * is not refreshed on every executed-case update. This keeps the gate correct
- * immediately after a `tc report` upload in the same pipeline.
+ * immediately after a `tc report` upload in the same pipeline. Unexecuted is
+ * derived as (cases in plan × configs) − executed, matching the backend's own
+ * aggregation, so stale/orphaned executed-case rows don't over-report it.
  *
  * Exit codes: 0 = gate passed · 1 = gate failed · 2 = usage / API error.
  */
@@ -75,6 +77,50 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// Normalize a /count response ({ count: N }) or a list ([...]) or a bare number.
+function extractCount(resp) {
+  if (typeof resp === 'number') {
+    return resp;
+  }
+  if (Array.isArray(resp)) {
+    return resp.length;
+  }
+  if (resp && typeof resp === 'object' && resp.count !== undefined) {
+    return Number(resp.count);
+  }
+  const n = Number(resp);
+  return Number.isFinite(n) ? n : NaN;
+}
+
+// TCV-6668: total planned executions for the plan = cases × configurations
+// (or just cases when a single --config is targeted). Used to derive unexecuted.
+// Returns null on any failure so the caller keeps the literal count.
+async function fetchPlannedTotal(baseApiUrl, token, projectId, testPlanId, configId) {
+  try {
+    const caseResp = await apiGet(
+      baseApiUrl,
+      token,
+      `/testplantestcases/count?project=${projectId}&testplan=${testPlanId}`
+    );
+    const caseCount = extractCount(caseResp);
+    if (!Number.isFinite(caseCount)) {
+      return null;
+    }
+    if (configId !== null) {
+      return caseCount;
+    }
+    const configs = await apiGet(
+      baseApiUrl,
+      token,
+      `/testplanconfigurations?project=${projectId}&testplan=${testPlanId}&_limit=-1`
+    );
+    const configCount = Array.isArray(configs) ? configs.length : 0;
+    return caseCount * Math.max(1, configCount);
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Parse a comma-separated --fail-on list into an array of status system names.
  * Defaults to ['failed'] — the minimum gate: any failing test case fails the build.
@@ -108,6 +154,34 @@ export function summarize(executedCases) {
     counts[status] = (counts[status] || 0) + 1;
   }
   return counts;
+}
+
+/**
+ * Recompute `unexecuted` from the plan's real case count instead of trusting the
+ * literal 'unexecuted' rows returned for a run.
+ *
+ * TCV-6668: a run's executedtestcase rows can include stale/orphaned 'unexecuted'
+ * placeholders (e.g. for cases later removed from the plan), which over-reports
+ * unexecuted. The backend (`getResult`/`updatePlanStats`) derives it instead:
+ * unexecuted = max(0, totalPlanned − executed), where executed counts every
+ * non-unexecuted status. We match that. If totalPlanned is unknown (count call
+ * failed), the literal count is kept unchanged.
+ *
+ * @param {object} summary       status -> count from summarize()
+ * @param {number|null} totalPlanned  cases in plan × configurations (or per config)
+ * @returns {object} a new summary with a corrected `unexecuted`
+ */
+export function reconcileUnexecuted(summary, totalPlanned) {
+  if (!Number.isFinite(totalPlanned) || totalPlanned < 0) {
+    return { ...summary };
+  }
+  let executed = 0;
+  for (const [key, value] of Object.entries(summary)) {
+    if (key !== 'unexecuted') {
+      executed += Number(value) || 0;
+    }
+  }
+  return { ...summary, unexecuted: Math.max(0, totalPlanned - executed) };
 }
 
 /**
@@ -194,7 +268,11 @@ function formatCounts(counts) {
     .join(' · ');
 }
 
-function parseNumericOption(value, flag, { allowNull = false } = {}) {
+// TCV-6668: strict numeric parsing. Every numeric option is interpolated into an
+// API query string, so we reject anything that isn't a finite number in range
+// (an integer by default). This both fixes nonsensical values like `--max-failed -1`
+// and closes the injection surface — e.g. Number('1 OR 1=1') is NaN and rejected.
+function parseNumericOption(value, flag, { allowNull = false, integer = true, min, max } = {}) {
   if (value === undefined || value === null || String(value).trim() === '') {
     if (allowNull) {
       return null;
@@ -202,11 +280,32 @@ function parseNumericOption(value, flag, { allowNull = false } = {}) {
     return NaN;
   }
   const n = Number(value);
-  if (Number.isNaN(n)) {
-    console.error(`❌ Error: ${flag} must be a number`);
+  if (!Number.isFinite(n) || (integer && !Number.isInteger(n))) {
+    console.error(`❌ Error: ${flag} must be ${integer ? 'an integer' : 'a number'}`);
+    process.exit(2);
+  }
+  if (min !== undefined && n < min) {
+    console.error(`❌ Error: ${flag} must be >= ${min}`);
+    process.exit(2);
+  }
+  if (max !== undefined && n > max) {
+    console.error(`❌ Error: ${flag} must be <= ${max}`);
     process.exit(2);
   }
   return n;
+}
+
+// TCV-6668: fail-on values are matched against status names client-side (never sent
+// to the API), but validate them anyway — reject anything outside a safe charset so
+// a stray quote/semicolon can't slip through as a "status".
+function validateFailOn(failOn) {
+  const SAFE = /^[A-Za-z0-9_ -]+$/;
+  for (const status of failOn) {
+    if (!SAFE.test(status)) {
+      console.error(`❌ Error: --fail-on contains an invalid status "${status}" (allowed: letters, numbers, space, _ , -)`);
+      process.exit(2);
+    }
+  }
 }
 
 /**
@@ -220,28 +319,29 @@ export async function gate(options) {
     process.exit(2);
   }
 
-  const projectId = parseNumericOption(options.project, '--project');
+  const projectId = parseNumericOption(options.project, '--project', { min: 1 });
   if (Number.isNaN(projectId)) {
-    console.error('❌ Error: --project is required and must be a number');
+    console.error('❌ Error: --project is required and must be a positive integer');
     process.exit(2);
   }
-  const testPlanId = parseNumericOption(options.testPlanId, '--test-plan-id');
+  const testPlanId = parseNumericOption(options.testPlanId, '--test-plan-id', { min: 1 });
   if (Number.isNaN(testPlanId)) {
-    console.error('❌ Error: --test-plan-id is required and must be a number');
+    console.error('❌ Error: --test-plan-id is required and must be a positive integer');
     process.exit(2);
   }
 
   const failOn = parseFailOn(options.failOn);
-  const maxFailed = parseNumericOption(options.maxFailed, '--max-failed');
+  validateFailOn(failOn);
+  const maxFailed = parseNumericOption(options.maxFailed, '--max-failed', { min: 0 });
   if (Number.isNaN(maxFailed)) {
-    console.error('❌ Error: --max-failed must be a number');
+    console.error('❌ Error: --max-failed must be a non-negative integer');
     process.exit(2);
   }
-  const minPassRate = parseNumericOption(options.minPassRate, '--min-pass-rate', { allowNull: true });
-  const configId = parseNumericOption(options.config, '--config', { allowNull: true });
-  const regressionOption = parseNumericOption(options.regression, '--regression', { allowNull: true });
-  const waitSeconds = parseNumericOption(options.wait, '--wait', { allowNull: true }) || 0;
-  const pollSeconds = parseNumericOption(options.pollInterval, '--poll-interval', { allowNull: true }) || 15;
+  const minPassRate = parseNumericOption(options.minPassRate, '--min-pass-rate', { allowNull: true, integer: false, min: 0, max: 100 });
+  const configId = parseNumericOption(options.config, '--config', { allowNull: true, min: 1 });
+  const regressionOption = parseNumericOption(options.regression, '--regression', { allowNull: true, min: 1 });
+  const waitSeconds = parseNumericOption(options.wait, '--wait', { allowNull: true, min: 0 }) || 0;
+  const pollSeconds = parseNumericOption(options.pollInterval, '--poll-interval', { allowNull: true, min: 0 }) || 15;
   const requireComplete = Boolean(options.requireComplete);
 
   const baseApiUrl = getBaseApiUrl(options.apiUrl);
@@ -269,6 +369,8 @@ export async function gate(options) {
     const planTitle = plan.title || '';
 
     // TCV-6668: resolve the run (regression) to evaluate — latest by default.
+    // regressionNumber is the human-facing run number (regression.iteration); it
+    // must be resolved for an explicit --regression too, else it prints "run #0".
     let regressionId = regressionOption;
     let regressionNumber = 0;
     if (regressionId === null) {
@@ -283,6 +385,14 @@ export async function gate(options) {
       }
       regressionId = runs[0].id;
       regressionNumber = runs[0].iteration || 0;
+    } else {
+      // Explicit --regression: look up its iteration (run number) for display.
+      try {
+        const run = await apiGet(baseApiUrl, apiKey, `/testplanregressions/${regressionId}`);
+        regressionNumber = (run && Number(run.iteration)) || 0;
+      } catch {
+        regressionNumber = 0;
+      }
     }
 
     const execEndpoint = () => {
@@ -314,12 +424,22 @@ export async function gate(options) {
       process.exit(2);
     }
 
-    const summary = summarize(executedCases);
+    // TCV-6668: derive unexecuted from the plan's real case count (see reconcileUnexecuted).
+    const totalPlanned = await fetchPlannedTotal(baseApiUrl, apiKey, projectId, testPlanId, configId);
+    const summary = reconcileUnexecuted(summarize(executedCases), totalPlanned);
+
+    // TCV-6668: warn on --fail-on statuses that don't exist in this run (likely a typo).
+    const knownStatuses = new Set([...SYSTEM_STATUSES, ...Object.keys(summary)]);
+    const unknownFailOn = failOn.filter((status) => !knownStatuses.has(status));
+    if (unknownFailOn.length) {
+      console.warn(`⚠️  --fail-on status(es) not present in this run: ${unknownFailOn.join(', ')} (typo?)`);
+    }
+
     const verdict = evaluateGate(summary, { failOn, maxFailed, minPassRate, requireComplete });
 
     const label = planTitle ? `#${testPlanId} "${planTitle}"` : `#${testPlanId}`;
     console.log(
-      `ℹ️  Test plan ${label} — run #${regressionNumber}` +
+      `ℹ️  Test plan ${label} — run #${regressionNumber || regressionId}` +
         `${configId !== null ? ` · config ${configId}` : ''}`
     );
     console.log(`   ${formatCounts(summary)}  (${verdict.total} total)`);
