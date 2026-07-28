@@ -7,12 +7,13 @@
  * when the configured gate criteria are not met, which fails the surrounding CI
  * step (Azure DevOps, Jenkins, GitLab CI, Ansible, …).
  *
- * Results are computed LIVE from the executed test cases of the plan's latest run
- * (regression) — deliberately NOT from the plan's cached `results` summary, which
- * is not refreshed on every executed-case update. This keeps the gate correct
- * immediately after a `tc report` upload in the same pipeline. Unexecuted is
- * derived as (cases in plan × configs) − executed, matching the backend's own
- * aggregation, so stale/orphaned executed-case rows don't over-report it.
+ * For the plan's LATEST run, results are computed LIVE from the executed test cases
+ * (fresh right after a `tc report`), with unexecuted derived as
+ * (cases in plan × configs) − executed — matching the backend's own aggregation, so
+ * stale/orphaned rows don't over-report it. For an explicit OLDER --regression, the
+ * run's frozen `result` summary is used (exactly what the UI shows for that run),
+ * because an old run's rows accumulate 'unexecuted' placeholders for cases added to
+ * the plan afterwards, which would over-count if recounted.
  *
  * Exit codes: 0 = gate passed · 1 = gate failed · 2 = usage / API error.
  */
@@ -368,30 +369,42 @@ export async function gate(options) {
     }
     const planTitle = plan.title || '';
 
-    // TCV-6668: resolve the run (regression) to evaluate — latest by default.
-    // regressionNumber is the human-facing run number (regression.iteration); it
-    // must be resolved for an explicit --regression too, else it prints "run #0".
-    let regressionId = regressionOption;
-    let regressionNumber = 0;
-    if (regressionId === null) {
-      const runs = await apiGet(
-        baseApiUrl,
-        apiKey,
-        `/testplanregressions?project=${projectId}&testplan=${testPlanId}&_sort=id:desc&_limit=1`
-      );
-      if (!Array.isArray(runs) || !runs.length || !runs[0] || !runs[0].id) {
-        console.error(`❌ Error: test plan ${testPlanId} has no runs yet — nothing to gate on.`);
+    // TCV-6668: resolve which run to gate on, and how to read its results.
+    //   • Latest run (default) — count executed cases LIVE (fresh right after a
+    //     `tc report`), deriving unexecuted from the plan's real case count.
+    //   • An explicit OLDER run — use its frozen `result` summary (exactly what the
+    //     UI shows for that run). An old run's executed-case rows accumulate
+    //     'unexecuted' placeholders for cases added to the plan afterwards, so
+    //     recounting them over-reports; the stored per-run summary is authoritative.
+    const latestRuns = await apiGet(
+      baseApiUrl,
+      apiKey,
+      `/testplanregressions?project=${projectId}&testplan=${testPlanId}&_sort=id:desc&_limit=1`
+    );
+    if (!Array.isArray(latestRuns) || !latestRuns.length || !latestRuns[0] || !latestRuns[0].id) {
+      console.error(`❌ Error: test plan ${testPlanId} has no runs yet — nothing to gate on.`);
+      process.exit(2);
+    }
+    const latestRun = latestRuns[0];
+
+    let regressionId = latestRun.id;
+    let regressionNumber = latestRun.iteration || 0;
+    let storedResult = null;
+    if (regressionOption !== null && regressionOption !== latestRun.id) {
+      let run = null;
+      try {
+        run = await apiGet(baseApiUrl, apiKey, `/testplanregressions/${regressionOption}`);
+      } catch {
+        run = null;
+      }
+      if (!run || !run.id) {
+        console.error(`❌ Error: run/regression ${regressionOption} not found for test plan ${testPlanId}.`);
         process.exit(2);
       }
-      regressionId = runs[0].id;
-      regressionNumber = runs[0].iteration || 0;
-    } else {
-      // Explicit --regression: look up its iteration (run number) for display.
-      try {
-        const run = await apiGet(baseApiUrl, apiKey, `/testplanregressions/${regressionId}`);
-        regressionNumber = (run && Number(run.iteration)) || 0;
-      } catch {
-        regressionNumber = 0;
+      regressionId = run.id;
+      regressionNumber = Number(run.iteration) || 0;
+      if (run.result && typeof run.result === 'object' && !Array.isArray(run.result)) {
+        storedResult = run.result;
       }
     }
 
@@ -403,30 +416,38 @@ export async function gate(options) {
       return endpoint;
     };
 
-    // TCV-6668: optional wait — poll until the run has no unexecuted cases (or timeout).
-    let executedCases = await apiGet(baseApiUrl, apiKey, execEndpoint());
-    if (waitSeconds > 0) {
-      const deadline = Date.now() + waitSeconds * 1000;
-      let running = summarize(executedCases);
-      while ((running.unexecuted || 0) > 0 && Date.now() < deadline) {
-        console.log(`⏳ Waiting for execution to complete — ${running.unexecuted} case(s) unexecuted…`);
-        await sleep(Math.max(1, pollSeconds) * 1000);
-        executedCases = await apiGet(baseApiUrl, apiKey, execEndpoint());
-        running = summarize(executedCases);
+    let summary;
+    if (storedResult && configId === null) {
+      // Historical run — authoritative frozen per-run summary (matches the UI).
+      summary = { ...storedResult };
+    } else {
+      // Latest run, or a --config slice: count live and derive unexecuted from the
+      // plan's real case count (see reconcileUnexecuted).
+      const totalPlanned = await fetchPlannedTotal(baseApiUrl, apiKey, projectId, testPlanId, configId);
+      let executedCases = await apiGet(baseApiUrl, apiKey, execEndpoint());
+
+      // TCV-6668: optional wait — poll until the run has no unexecuted cases (or timeout).
+      if (waitSeconds > 0) {
+        const deadline = Date.now() + waitSeconds * 1000;
+        let running = reconcileUnexecuted(summarize(executedCases), totalPlanned);
+        while ((running.unexecuted || 0) > 0 && Date.now() < deadline) {
+          console.log(`⏳ Waiting for execution to complete — ${running.unexecuted} case(s) unexecuted…`);
+          await sleep(Math.max(1, pollSeconds) * 1000);
+          executedCases = await apiGet(baseApiUrl, apiKey, execEndpoint());
+          running = reconcileUnexecuted(summarize(executedCases), totalPlanned);
+        }
       }
-    }
 
-    if (!Array.isArray(executedCases) || !executedCases.length) {
-      console.error(
-        `❌ Error: no executed test cases found for run #${regressionId}` +
-          `${configId !== null ? ` (config ${configId})` : ''}.`
-      );
-      process.exit(2);
-    }
+      if (!Array.isArray(executedCases) || !executedCases.length) {
+        console.error(
+          `❌ Error: no executed test cases found for run #${regressionNumber || regressionId}` +
+            `${configId !== null ? ` (config ${configId})` : ''}.`
+        );
+        process.exit(2);
+      }
 
-    // TCV-6668: derive unexecuted from the plan's real case count (see reconcileUnexecuted).
-    const totalPlanned = await fetchPlannedTotal(baseApiUrl, apiKey, projectId, testPlanId, configId);
-    const summary = reconcileUnexecuted(summarize(executedCases), totalPlanned);
+      summary = reconcileUnexecuted(summarize(executedCases), totalPlanned);
+    }
 
     // TCV-6668: warn on --fail-on statuses that don't exist in this run (likely a typo).
     const knownStatuses = new Set([...SYSTEM_STATUSES, ...Object.keys(summary)]);
