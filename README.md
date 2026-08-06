@@ -58,6 +58,8 @@ tc createTestPlan \
   --project <id> \
   --ci-tag-id <id> \
   --assignee-id <id> \
+  [--build <idOrVersion>] \
+  [--release <id>] \
   [--api-key <key>] \
   [--api-url <url>]
 ```
@@ -67,10 +69,26 @@ tc createTestPlan \
 | `--project <id>` | Yes | Project ID |
 | `--ci-tag-id <id>` | Yes | Tag ID — test cases with this tag are added to the plan |
 | `--assignee-id <id>` | Yes | User ID to assign the plan execution to |
+| `--build <idOrVersion>` | No | Build the plan is executed against — a build ID or a version string (e.g. `2026.8.6-rc1`). Results are then traceable to that build. |
+| `--release <id>` | No | Release ID the plan belongs to |
 | `--api-key <key>` | No | TestCollab API key (or set `TESTCOLLAB_TOKEN` env var) |
 | `--api-url <url>` | No | API base URL (default: `https://api.testcollab.io`). Use `https://api-eu.testcollab.io` for EU region. |
 
 **Output:** Writes the created plan ID to `tmp/tc_test_plan` as `TESTCOLLAB_TEST_PLAN_ID=<id>`. You can source this file in subsequent CI steps.
+
+#### Tying the plan to the version it tests
+
+A pipeline that has just deployed a build can create its plan against that build in the same run, so the results carry the deployment context through to the build traceability views and release readiness:
+
+```bash
+# the version your pipeline just deployed — no need to look up a build ID first
+tc createTestPlan --project 45 --ci-tag-id 12 --assignee-id 7 --build "$APP_VERSION"
+```
+
+- `--build` accepts either a **build ID** or a **version string**. A numeric value is looked up as an ID first and retried as a version, so a numeric version (e.g. a build number) works too.
+- The build must already exist in TestCollab. If nothing matches, the command **fails with a clear message and creates no plan**, rather than leaving an unlinked plan behind — record the build first (Test plans → Builds, or your CI build sync) and re-run.
+- If several builds share the version, the command asks you to pass the build ID instead.
+- Passing only `--build` is enough when the build belongs to a release: TestCollab fills the plan's release in from the build. Passing only `--release` links the release with no build attached.
 
 ---
 
@@ -458,6 +476,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       TESTCOLLAB_TOKEN: ${{ secrets.TESTCOLLAB_TOKEN }}
+      APP_VERSION: ${{ github.ref_name }}   # the version you just deployed
     steps:
       - uses: actions/checkout@v4
 
@@ -467,12 +486,15 @@ jobs:
 
       - run: npm install -g @testcollab/cli && npm ci
 
-      # Step 1: Create test plan with CI-tagged cases
+      # Step 1: Create test plan with CI-tagged cases, tied to the deployed build
+      #         (--build takes a build ID or a version string; drop it if you
+      #          don't track builds, or use --release <id> on its own)
       - run: |
           tc createTestPlan \
             --project ${{ secrets.TC_PROJECT_ID }} \
             --ci-tag-id ${{ secrets.TC_CI_TAG_ID }} \
-            --assignee-id ${{ secrets.TC_ASSIGNEE_ID }}
+            --assignee-id ${{ secrets.TC_ASSIGNEE_ID }} \
+            --build ${{ env.APP_VERSION }}
 
       # Step 2: Read the created test plan ID
       - run: cat tmp/tc_test_plan >> $GITHUB_ENV
@@ -549,7 +571,10 @@ test-and-report:
   before_script:
     - npm install -g @testcollab/cli && npm ci
   script:
-    - tc createTestPlan --project $TC_PROJECT_ID --ci-tag-id $TC_CI_TAG_ID --assignee-id $TC_ASSIGNEE_ID
+    # --build ties the plan to the version this pipeline deployed (build ID or version
+    # string; it must already exist as a build in TestCollab). Omit it, or use
+    # --release <id> instead, if you don't track builds.
+    - tc createTestPlan --project $TC_PROJECT_ID --ci-tag-id $TC_CI_TAG_ID --assignee-id $TC_ASSIGNEE_ID --build $APP_VERSION
     - export $(cat tmp/tc_test_plan)
     - npx cypress run --reporter mochawesome
     - tc report --project $TC_PROJECT_ID --test-plan-id $TESTCOLLAB_TEST_PLAN_ID --format mochawesome --result-file ./mochawesome-report/mochawesome.json

@@ -9,12 +9,13 @@
  * - --project        Project ID
  * - --ci-tag-id      Tag ID to select test cases
  * - --assignee-id    User ID to assign the plan
+ * - --build          Build id or version string the plan is executed against (TCV-6788)
+ * - --release        Release ID the plan belongs to (TCV-6788)
  * - --api-url        (defaults to https://api.testcollab.io)
  */
 
 import fs from 'fs';
 import {
-  TestPlansApi,
   TestPlanTestCasesApi,
   TestPlansAssignmentApi,
   Configuration,
@@ -23,6 +24,130 @@ import {
   TestCasesApi,
   ProjectUsersApi
 } from 'testcollab-sdk';
+
+// TCV-6788: the build/release lookups and the plan create go through direct
+// requests instead of the SDK — the published SDK's TestPlanPayload does not
+// carry `build`/`release`, and its serializer drops keys it does not know.
+function buildUrl(baseApiUrl, endpoint, token) {
+  const normalized = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+  const separator = normalized.includes('?') ? '&' : '?';
+  return `${baseApiUrl}${normalized}${separator}token=${encodeURIComponent(token)}`;
+}
+
+async function apiRequest(baseApiUrl, token, endpoint, options = {}) {
+  const { method = 'GET', body } = options;
+  const requestOptions = {
+    method,
+    headers: { Accept: 'application/json' }
+  };
+  if (body !== undefined) {
+    requestOptions.headers['Content-Type'] = 'application/json';
+    requestOptions.body = JSON.stringify(body);
+  }
+
+  let response;
+  try {
+    response = await fetch(buildUrl(baseApiUrl, endpoint, token), requestOptions);
+  } catch (error) {
+    throw new Error(`Failed to call ${endpoint}: ${error?.message || String(error)}`);
+  }
+
+  const rawBody = await response.text();
+  let data = null;
+  if (rawBody) {
+    try {
+      data = JSON.parse(rawBody);
+    } catch {
+      data = rawBody;
+    }
+  }
+
+  if (!response.ok) {
+    const message =
+      (data && typeof data === 'object' && (data.message || data.error)) ||
+      (typeof data === 'string' ? data : '') ||
+      response.statusText ||
+      `HTTP ${response.status}`;
+    const error = new Error(String(message));
+    error.status = response.status;
+    throw error;
+  }
+
+  // Some endpoints answer 200 with a failure envelope instead of an HTTP error.
+  if (data && typeof data === 'object' && data.status === false) {
+    throw new Error(String(data.message || `Request to ${endpoint} failed`));
+  }
+
+  return data;
+}
+
+function relationId(value) {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  return typeof value === 'object' ? value.id : value;
+}
+
+/**
+ * TCV-6788: the builds whose version matches `version` exactly (trimmed,
+ * case-insensitive). The server-side filter is re-applied on the client so a
+ * looser match can never silently link the plan to the wrong build.
+ */
+export function selectBuildsByVersion(builds, version) {
+  const wanted = String(version === undefined || version === null ? '' : version)
+    .trim()
+    .toLowerCase();
+  const list = Array.isArray(builds) ? builds : [];
+  return list.filter(
+    (build) => String(build?.version ?? '').trim().toLowerCase() === wanted
+  );
+}
+
+/**
+ * TCV-6788: resolve a --build value (build id or version string) to a build of
+ * the project. A numeric value is looked up as an id first and retried as a
+ * version, so a pipeline can pass a numeric version (e.g. a build number).
+ * Throws when the build cannot be resolved — the caller aborts before creating
+ * the plan, so a pipeline never ends up with an unlinked plan.
+ */
+export async function resolveBuild(baseApiUrl, token, projectId, buildRef) {
+  const raw = String(buildRef).trim();
+
+  if (/^\d+$/.test(raw)) {
+    let build = null;
+    try {
+      build = await apiRequest(baseApiUrl, token, `/builds/${raw}`);
+    } catch (error) {
+      if (error?.status !== 404) {
+        throw error;
+      }
+    }
+    if (build && relationId(build.project) === projectId) {
+      return build;
+    }
+  }
+
+  const builds = await apiRequest(
+    baseApiUrl,
+    token,
+    `/builds?project=${projectId}&version=${encodeURIComponent(raw)}`
+  );
+  const matches = selectBuildsByVersion(builds, raw);
+
+  if (matches.length === 1) {
+    return matches[0];
+  }
+  if (matches.length > 1) {
+    throw new Error(
+      `${matches.length} builds in project ${projectId} have version "${raw}" ` +
+        `(ids: ${matches.map((b) => b.id).join(', ')}). Pass --build <id> to pick one.`
+    );
+  }
+  throw new Error(
+    `No build ${/^\d+$/.test(raw) ? 'with id or version' : 'with version'} "${raw}" ` +
+      `found in project ${projectId}. Create the build in TestCollab first, then re-run.`
+  );
+}
 
 function getDate() {
   const now = new Date();
@@ -39,7 +164,9 @@ export async function createTestPlan(options) {
     project,
     ciTagId,
     assigneeId,
-    apiUrl
+    apiUrl,
+    build,
+    release
   } = options;
 
   // Resolve API key: --api-key flag takes precedence, then TESTCOLLAB_TOKEN env var
@@ -86,6 +213,20 @@ export async function createTestPlan(options) {
     process.exit(1);
   }
 
+  // TCV-6788: --release is always an id; --build takes an id or a version string.
+  let parsedReleaseId = null;
+  if (release !== undefined) {
+    parsedReleaseId = Number(release);
+    if (!Number.isInteger(parsedReleaseId) || parsedReleaseId <= 0) {
+      console.error('❌ Error: --release must be a release ID');
+      process.exit(1);
+    }
+  }
+  if (build !== undefined && !String(build).trim()) {
+    console.error('❌ Error: --build must be a build ID or a version string');
+    process.exit(1);
+  }
+
   // Configure SDK with token and base URL via fetchApi hook
   const config = new Configuration({
     basePath: effectiveApiUrl,
@@ -100,7 +241,6 @@ export async function createTestPlan(options) {
   const usersApi = new UsersApi(config);
   const tcApi = new TestCasesApi(config);
   const projectUsersApi = new ProjectUsersApi(config);
-  const testPlansApi = new TestPlansApi(config);
   const testPlanCases = new TestPlanTestCasesApi(config);
   const testPlanAssignment = new TestPlansAssignmentApi(config);
 
@@ -183,18 +323,41 @@ export async function createTestPlan(options) {
     process.exit(1);
   }
 
+  // TCV-6788: resolve the build before the plan is created, so a version that
+  // has not been recorded as a build yet fails here instead of leaving an
+  // unlinked plan behind.
+  let resolvedBuild = null;
+  if (build !== undefined) {
+    try {
+      resolvedBuild = await resolveBuild(effectiveApiUrl, apiKey, parsedProjectId, build);
+      console.log(`Build: ${resolvedBuild.version} (id ${resolvedBuild.id})`);
+    } catch (e) {
+      console.error(`❌ Error: ${e?.message || String(e)}`);
+      process.exit(1);
+    }
+  }
+
+  const testPlanPayload = {
+    project: parsedProjectId,
+    title: `CI Test: ${getDate()}`,
+    description: 'This is a test plan created using the Node.js SDK',
+    status: 1,
+    priority: 1,
+    test_plan_folder: null,
+    custom_fields: []
+  };
+  if (resolvedBuild) {
+    testPlanPayload.build = resolvedBuild.id;
+  }
+  if (parsedReleaseId !== null) {
+    testPlanPayload.release = parsedReleaseId;
+  }
+
   try {
     console.log('Step 1: Creating a new test plan...');
-    const createResponse = await testPlansApi.addTestPlan({
-      testPlanPayload: {
-        project: parsedProjectId,
-        title: `CI Test: ${getDate()}`,
-        description: 'This is a test plan created using the Node.js SDK',
-        status: 1,
-        priority: 1,
-        testPlanFolder: null,
-        customFields: []
-      }
+    const createResponse = await apiRequest(effectiveApiUrl, apiKey, '/testplans', {
+      method: 'POST',
+      body: testPlanPayload
     });
 
     const testPlanId = createResponse.id;

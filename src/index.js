@@ -39,6 +39,8 @@ program
   .requiredOption('--project <id>', 'TestCollab project ID')
   .requiredOption('--ci-tag-id <id>', 'CI tag ID to include cases')
   .requiredOption('--assignee-id <id>', 'User ID to assign execution')
+  .option('--build <idOrVersion>', 'Build ID or version string the plan is executed against')
+  .option('--release <id>', 'Release ID the plan belongs to')
   .option('--api-url <url>', 'TestCollab API base URL', 'https://api.testcollab.io')
   .action(createTestPlan);
 
