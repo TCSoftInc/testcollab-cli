@@ -54,9 +54,8 @@ program
   .option('--api-url <url>', 'TestCollab API base URL override', 'https://api.testcollab.io')
   .option('--skip-missing', 'Mark test cases in the test plan but not in the result file as skipped', false)
   .option('--auto-create', 'Auto-create missing tag, suites, test cases, folder, and test plan from result file')
-  .option('--build <version>', 'Build version the results were run against; created if no build records it yet (requires --auto-create)')
-  .option('--build-id <id>', 'Existing build to link the auto-created test plan to (alternative to --build)')
-  .option('--environment <name>', 'Environment recorded on the build created by --build (e.g. Staging)')
+  .option('--build <idOrVersion>', 'Build the results were run against, by id or version; the version is created as a build if no build records it yet (requires --auto-create)')
+  .option('--environment <name>', 'Environment recorded on the build when --build creates it (e.g. Staging)')
   .action(report);
 
 // Add getTestPlan command
