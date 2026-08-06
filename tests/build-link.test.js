@@ -6,7 +6,7 @@
  */
 
 import { jest } from '@jest/globals';
-import { pickBuildByVersion, resolveBuild } from '../src/lib/builds.js';
+import { selectBuildsByVersion, resolveBuild } from '../src/lib/builds.js';
 
 const BASE_URL = 'http://localhost:1337';
 const TOKEN = 'test-token';
@@ -37,6 +37,9 @@ function stubFetch(responses) {
   return calls;
 }
 
+const resolve = (buildRef, options) =>
+  resolveBuild(BASE_URL, TOKEN, PROJECT_ID, buildRef, options);
+
 beforeEach(() => {
   jest.spyOn(console, 'log').mockImplementation(() => {});
   jest.spyOn(console, 'warn').mockImplementation(() => {});
@@ -47,14 +50,14 @@ afterEach(() => {
   delete global.fetch;
 });
 
-describe('pickBuildByVersion', () => {
-  test('returns null when nothing matches', () => {
-    expect(pickBuildByVersion([{ id: 1, version: '1.0.0' }], '2.0.0')).toBeNull();
+describe('selectBuildsByVersion', () => {
+  test('returns nothing when no version matches', () => {
+    expect(selectBuildsByVersion([{ id: 1, version: '1.0.0' }], '2.0.0')).toEqual([]);
   });
 
-  test('returns null for an empty or missing list', () => {
-    expect(pickBuildByVersion([], '1.0.0')).toBeNull();
-    expect(pickBuildByVersion(null, '1.0.0')).toBeNull();
+  test('returns nothing for an empty or missing list', () => {
+    expect(selectBuildsByVersion([], '1.0.0')).toEqual([]);
+    expect(selectBuildsByVersion(null, '1.0.0')).toEqual([]);
   });
 
   test('matches the exact version only', () => {
@@ -62,20 +65,19 @@ describe('pickBuildByVersion', () => {
       { id: 1, version: '1.0.0-rc1' },
       { id: 2, version: '1.0.0' }
     ];
-    expect(pickBuildByVersion(builds, '1.0.0').id).toBe(2);
+    expect(selectBuildsByVersion(builds, '1.0.0').map((b) => b.id)).toEqual([2]);
   });
 
-  test('picks the most recent build when a version is recorded more than once', () => {
+  test('matches case-insensitively and ignores surrounding whitespace', () => {
+    expect(selectBuildsByVersion([{ id: 1, version: 'V2.0-RC' }], ' v2.0-rc ')).toHaveLength(1);
+  });
+
+  test('returns every build sharing a version', () => {
     const builds = [
       { id: 3, version: '1.0.0' },
-      { id: 9, version: '1.0.0' },
-      { id: 7, version: '1.0.0' }
+      { id: 9, version: '1.0.0' }
     ];
-    expect(pickBuildByVersion(builds, '1.0.0').id).toBe(9);
-  });
-
-  test('ignores surrounding whitespace on the wanted version', () => {
-    expect(pickBuildByVersion([{ id: 1, version: '1.0.0' }], '  1.0.0 ').id).toBe(1);
+    expect(selectBuildsByVersion(builds, '1.0.0')).toHaveLength(2);
   });
 });
 
@@ -83,12 +85,7 @@ describe('resolveBuild by version', () => {
   test('reuses an existing build and does not create one', async () => {
     const calls = stubFetch([jsonResponse([{ id: 12, version: '2.14.1' }])]);
 
-    const build = await resolveBuild({
-      baseApiUrl: BASE_URL,
-      token: TOKEN,
-      projectId: PROJECT_ID,
-      buildVersion: '2.14.1'
-    });
+    const build = await resolve('2.14.1');
 
     expect(build).toEqual({ id: 12, version: '2.14.1', created: false });
     expect(calls).toHaveLength(1);
@@ -102,13 +99,7 @@ describe('resolveBuild by version', () => {
       jsonResponse({ id: 30, version: '2.15.0', environment: 'Staging' })
     ]);
 
-    const build = await resolveBuild({
-      baseApiUrl: BASE_URL,
-      token: TOKEN,
-      projectId: PROJECT_ID,
-      buildVersion: '2.15.0',
-      environment: 'Staging'
-    });
+    const build = await resolve('2.15.0', { environment: 'Staging' });
 
     expect(build).toEqual({ id: 30, version: '2.15.0', created: true });
     expect(calls).toHaveLength(2);
@@ -123,12 +114,7 @@ describe('resolveBuild by version', () => {
   test('omits environment from the created build when none was given', async () => {
     const calls = stubFetch([jsonResponse([]), jsonResponse({ id: 31, version: '2.15.1' })]);
 
-    await resolveBuild({
-      baseApiUrl: BASE_URL,
-      token: TOKEN,
-      projectId: PROJECT_ID,
-      buildVersion: '2.15.1'
-    });
+    await resolve('2.15.1');
 
     expect(JSON.parse(calls[1].options.body)).toEqual({
       project: PROJECT_ID,
@@ -139,12 +125,7 @@ describe('resolveBuild by version', () => {
   test('never sets a release on the build it creates', async () => {
     const calls = stubFetch([jsonResponse([]), jsonResponse({ id: 32, version: '3.0.0' })]);
 
-    await resolveBuild({
-      baseApiUrl: BASE_URL,
-      token: TOKEN,
-      projectId: PROJECT_ID,
-      buildVersion: '3.0.0'
-    });
+    await resolve('3.0.0');
 
     expect(JSON.parse(calls[1].options.body)).not.toHaveProperty('release');
   });
@@ -152,12 +133,7 @@ describe('resolveBuild by version', () => {
   test('url-encodes a version with characters that need it', async () => {
     const calls = stubFetch([jsonResponse([{ id: 40, version: 'release/2.0 rc' }])]);
 
-    await resolveBuild({
-      baseApiUrl: BASE_URL,
-      token: TOKEN,
-      projectId: PROJECT_ID,
-      buildVersion: 'release/2.0 rc'
-    });
+    await resolve('release/2.0 rc');
 
     expect(calls[0].url).toContain('version=release%2F2.0%20rc');
   });
@@ -165,29 +141,27 @@ describe('resolveBuild by version', () => {
   test('warns but keeps the existing build when its environment differs', async () => {
     stubFetch([jsonResponse([{ id: 12, version: '2.14.1', environment: 'Production' }])]);
 
-    const build = await resolveBuild({
-      baseApiUrl: BASE_URL,
-      token: TOKEN,
-      projectId: PROJECT_ID,
-      buildVersion: '2.14.1',
-      environment: 'Staging'
-    });
+    const build = await resolve('2.14.1', { environment: 'Staging' });
 
     expect(build.id).toBe(12);
     expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('Production'));
   });
 
+  test('asks for an id instead of guessing when a version is recorded twice', async () => {
+    stubFetch([
+      jsonResponse([
+        { id: 3, version: '1.0.0' },
+        { id: 9, version: '1.0.0' }
+      ])
+    ]);
+
+    await expect(resolve('1.0.0')).rejects.toThrow('Pass --build <id> to pick one');
+  });
+
   test('surfaces the API error message when the build cannot be created', async () => {
     stubFetch([jsonResponse([]), jsonResponse({ message: 'Forbidden' }, { ok: false, status: 403 })]);
 
-    await expect(
-      resolveBuild({
-        baseApiUrl: BASE_URL,
-        token: TOKEN,
-        projectId: PROJECT_ID,
-        buildVersion: '2.16.0'
-      })
-    ).rejects.toThrow('Forbidden');
+    await expect(resolve('2.16.0')).rejects.toThrow('Forbidden');
   });
 });
 
@@ -197,66 +171,55 @@ describe('resolveBuild by id', () => {
       jsonResponse({ id: 12, version: '2.14.1', project: { id: PROJECT_ID } })
     ]);
 
-    const build = await resolveBuild({
-      baseApiUrl: BASE_URL,
-      token: TOKEN,
-      projectId: PROJECT_ID,
-      buildId: 12
-    });
+    const build = await resolve('12');
 
     expect(build).toEqual({ id: 12, version: '2.14.1', created: false });
+    expect(calls).toHaveLength(1);
     expect(calls[0].url).toContain('/builds/12');
   });
 
   test('accepts a project returned as a plain id', async () => {
     stubFetch([jsonResponse({ id: 12, version: '2.14.1', project: PROJECT_ID })]);
 
-    const build = await resolveBuild({
-      baseApiUrl: BASE_URL,
-      token: TOKEN,
-      projectId: PROJECT_ID,
-      buildId: 12
-    });
-
-    expect(build.id).toBe(12);
+    expect((await resolve(12)).id).toBe(12);
   });
 
-  test('rejects a build from another project instead of linking it', async () => {
-    stubFetch([jsonResponse({ id: 12, version: '2.14.1', project: { id: 99 } })]);
+  test('retries a numeric value as a version when no build has that id', async () => {
+    const calls = stubFetch([
+      jsonResponse({ message: 'Resource not found' }, { ok: false, status: 404 }),
+      jsonResponse([{ id: 55, version: '151' }])
+    ]);
 
-    await expect(
-      resolveBuild({
-        baseApiUrl: BASE_URL,
-        token: TOKEN,
-        projectId: PROJECT_ID,
-        buildId: 12
-      })
-    ).rejects.toThrow('does not belong to project 4');
+    const build = await resolve('151');
+
+    expect(build).toEqual({ id: 55, version: '151', created: false });
+    expect(calls[0].url).toContain('/builds/151');
+    expect(calls[1].url).toContain('version=151');
   });
 
-  test('names the build in the error when the id does not exist', async () => {
-    stubFetch([jsonResponse({ message: 'Resource not found' }, { ok: false, status: 404 })]);
+  test('creates the build when a numeric version is neither an id nor a build', async () => {
+    const calls = stubFetch([
+      jsonResponse({ message: 'Resource not found' }, { ok: false, status: 404 }),
+      jsonResponse([]),
+      jsonResponse({ id: 56, version: '152' })
+    ]);
 
-    await expect(
-      resolveBuild({
-        baseApiUrl: BASE_URL,
-        token: TOKEN,
-        projectId: PROJECT_ID,
-        buildId: 999
-      })
-    ).rejects.toThrow('Build 999 not found');
+    const build = await resolve('152');
+
+    expect(build).toEqual({ id: 56, version: '152', created: true });
+    expect(JSON.parse(calls[2].options.body)).toEqual({ project: PROJECT_ID, version: '152' });
   });
 
-  test('passes other API errors through untouched', async () => {
+  test('stops on a build id from another project instead of recording it as a version', async () => {
+    const calls = stubFetch([jsonResponse({ id: 12, version: '2.14.1', project: { id: 99 } })]);
+
+    await expect(resolve('12')).rejects.toThrow('Build 12 belongs to another project');
+    expect(calls).toHaveLength(1);
+  });
+
+  test('passes non-404 API errors through untouched', async () => {
     stubFetch([jsonResponse({ message: 'Forbidden' }, { ok: false, status: 403 })]);
 
-    await expect(
-      resolveBuild({
-        baseApiUrl: BASE_URL,
-        token: TOKEN,
-        projectId: PROJECT_ID,
-        buildId: 12
-      })
-    ).rejects.toThrow('Forbidden');
+    await expect(resolve('12')).rejects.toThrow('Forbidden');
   });
 });

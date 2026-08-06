@@ -248,9 +248,8 @@ tc report --project <id> --test-plan-id <id> --format <mochawesome|junit> --resu
 | `--api-url <url>` | No | API base URL override (default: `https://api.testcollab.io`). Use `https://api-eu.testcollab.io` for EU region. |
 | `--skip-missing` | No | Mark test cases in the test plan but not in the result file as **skipped** |
 | `--auto-create` | * | Auto-create tag, suites, test cases, folder, and test plan from result file |
-| `--build <version>` | No | Build version the results were run against. Created if no build records it yet. Requires `--auto-create`. |
-| `--build-id <id>` | No | Link to an existing build by id instead of by version. Requires `--auto-create`. |
-| `--environment <name>` | No | Environment recorded on the build that `--build` creates (e.g. `Staging`) |
+| `--build <idOrVersion>` | No | Build the results were run against, by id or version. A version with no build yet is created as one. Requires `--auto-create`. |
+| `--environment <name>` | No | Environment recorded on the build when `--build` creates it (e.g. `Staging`) |
 
 > \* Either `--test-plan-id` or `--auto-create` is required (they are mutually exclusive).
 
@@ -312,10 +311,11 @@ tc report \
   --environment Staging
 ```
 
-- A build is simply a record of a version that was deployed, so if no build in the project has that version yet it is **created** from the version (and `--environment`, when given). An existing build with that version is reused, and `--environment` is then ignored — the build already says which environment it is.
-- Use `--build-id <id>` instead when the pipeline already knows the build id. The id must belong to `--project`; nothing is created if it does not.
+- `--build` takes a **build id or a version string**, the same as [`tc createTestPlan`](#tc-createtestplan). A numeric value is looked up as an id first and retried as a version, so numeric versions and build numbers work too.
+- A build is simply a record of a version that was deployed, so if no build in the project has that version yet it is **created** from the version (and `--environment`, when given). An existing build is reused, and `--environment` is then ignored — the build already says which environment it is.
+- If several builds in the project share the version, the command stops and asks for an id rather than guessing which one the results belong to. An id belonging to another project also stops the run, rather than being recorded as a new version.
 - A **release is never created**. The plan picks up a release when one of the project's releases has a version pattern matching the build (for example pattern `2.14.*` and build `2.14.9`); otherwise the plan simply has no release. Releases stay a planning decision someone makes in TestCollab.
-- Both options require `--auto-create`. A plan passed with `--test-plan-id` keeps whatever build it was already given.
+- `--build` requires `--auto-create`. A plan passed with `--test-plan-id` keeps whatever build it was already given.
 
 #### `--skip-missing`
 

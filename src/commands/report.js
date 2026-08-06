@@ -1328,15 +1328,7 @@ function createSdkConfig(apiKey, apiUrl) {
  * Uses testcollab-sdk (same pattern as createTestPlan.js), except for the test
  * plan create — see step 9.
  */
-async function autoCreateTestPlan({
-  apiKey,
-  apiUrl,
-  projectId,
-  parsedReport,
-  buildVersion,
-  buildId,
-  environment
-}) {
+async function autoCreateTestPlan({ apiKey, apiUrl, projectId, parsedReport, buildRef, environment }) {
   const config = createSdkConfig(apiKey, apiUrl);
   const effectiveApiUrl = getBaseApiUrl(apiUrl);
 
@@ -1360,19 +1352,12 @@ async function autoCreateTestPlan({
     throw new Error('Failed to fetch current user. Check your API key.');
   }
 
-  // TCV-6789: resolve the build before anything is created, so a wrong build id
-  // or a missing build permission fails the run before it leaves half-created
-  // suites and test cases behind.
+  // TCV-6789: resolve the build before anything is created, so an unresolvable
+  // build or a missing build permission fails the run before it leaves
+  // half-created suites and test cases behind.
   let build = null;
-  if (buildVersion || buildId) {
-    build = await resolveBuild({
-      baseApiUrl: effectiveApiUrl,
-      token: apiKey,
-      projectId,
-      buildVersion,
-      buildId,
-      environment
-    });
+  if (buildRef !== undefined) {
+    build = await resolveBuild(effectiveApiUrl, apiKey, projectId, buildRef, { environment });
   }
 
   // 2. Find or create "CI Imported" tag
@@ -1683,7 +1668,6 @@ export async function report(options) {
     skipMissing,
     autoCreate,
     build,
-    buildId,
     environment
   } = options;
 
@@ -1728,33 +1712,20 @@ export async function report(options) {
 
   // TCV-6789: the build ties the plan to the version that was deployed, so it
   // only applies to the plan --auto-create makes — an existing plan passed via
-  // --test-plan-id keeps whatever build it was already given.
-  // An empty --build is a pipeline variable that did not resolve; fail rather
-  // than quietly producing a plan with no build.
+  // --test-plan-id keeps whatever build it was already given. An empty --build is
+  // a pipeline variable that did not resolve; fail rather than quietly producing
+  // a plan with no build.
   if (build !== undefined && !String(build).trim()) {
-    console.error('❌ Error: --build requires a build version');
+    console.error('❌ Error: --build must be a build ID or a version string');
     process.exit(1);
   }
-  if (build && buildId) {
-    console.error('❌ Error: --build and --build-id are mutually exclusive');
+  if (build !== undefined && !autoCreate) {
+    console.error('❌ Error: --build requires --auto-create');
     process.exit(1);
   }
-  if ((build || buildId) && !autoCreate) {
-    console.error('❌ Error: --build and --build-id require --auto-create');
+  if (environment && build === undefined) {
+    console.error('❌ Error: --environment only applies to the build named by --build');
     process.exit(1);
-  }
-  if (environment && !build) {
-    console.error('❌ Error: --environment only applies to the build created by --build');
-    process.exit(1);
-  }
-
-  let parsedBuildId = null;
-  if (buildId) {
-    parsedBuildId = Number(buildId);
-    if (!Number.isInteger(parsedBuildId) || parsedBuildId <= 0) {
-      console.error('❌ Error: --build-id must be a build id');
-      process.exit(1);
-    }
   }
 
   const normalizedFormat = normalizeReportFormat(format);
@@ -1800,8 +1771,7 @@ export async function report(options) {
         apiUrl,
         projectId: parsedProjectId,
         parsedReport,
-        buildVersion: build,
-        buildId: parsedBuildId,
+        buildRef: build,
         environment
       });
       effectiveTestPlanId = autoResult.testPlanId;

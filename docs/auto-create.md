@@ -13,7 +13,7 @@ tc-cli report --project 123 --format junit --result-file results.xml --auto-crea
 ```
 
 1. Parses your result file (JUnit XML or Mochawesome JSON)
-2. Resolves the **build** when `--build` / `--build-id` is passed (creating it from the version if no build records it yet)
+2. Resolves the **build** when `--build` is passed (creating it from the version if no build records it yet)
 3. Creates a **"CI Imported"** tag (if it doesn't exist)
 4. Creates **test suites** from suite/class names in the results (if they don't exist)
 5. Creates **test cases** from test names (if they don't exist), matching existing ones by title
@@ -75,7 +75,7 @@ Auto-create handles mixed results seamlessly. If some tests have TC IDs and othe
 | **Test Cases** | From test names in result file | Only when no match by ID or title exists |
 | **Test Plan Folder** | `CI` | Once per project |
 | **Test Plan** | `CI Run: DD-MM-YYYY HH:MM` | Every run creates a new plan |
-| **Build** | The version passed to `--build` | Only when no build in the project has that version |
+| **Build** | The version passed to `--build` | Only when the value is not a build id and no build has that version |
 
 ## Linking Results to a Build
 
@@ -91,11 +91,10 @@ tc-cli report \
   --environment Staging
 ```
 
-- **`--build <version>`** — the version the pipeline just deployed. A build is simply a record of a deployed version, so if the project has no build with that version yet, one is created from the version and `--environment`. An existing build with that version is reused as-is, and `--environment` is ignored (with a warning) because the build already records its environment.
-- **`--build-id <id>`** — use when the pipeline already knows the build id. The build must belong to `--project`; if it does not, the run stops before anything is created.
+- **`--build <idOrVersion>`** — the build the results were run against, given as a build id or as the version the pipeline just deployed. Reading it the same way as `tc createTestPlan` (TCV-6788): a numeric value is looked up as an id first and retried as a version, so numeric versions and build numbers work too. A build is simply a record of a deployed version, so if the project has no build with that version yet, one is created from the version and `--environment`. An existing build is reused as-is, and `--environment` is ignored (with a warning) because the build already records its environment. If several builds share the version, the command stops and asks for an id rather than guessing, and an id belonging to another project stops the run rather than being recorded as a new version.
 - **`--environment <name>`** — only meaningful alongside `--build`, and only used when the build is created.
 
-Both options require `--auto-create`. A plan passed with `--test-plan-id` already exists and keeps whatever build it was given.
+`--build` requires `--auto-create`. A plan passed with `--test-plan-id` already exists and keeps whatever build it was given.
 
 **Releases are never created.** The plan gets a release only when one of the project's releases has a version pattern that matches the build (e.g. pattern `2.14.*` matching build `2.14.9`); otherwise the plan has no release. A release is a planning decision someone makes in TestCollab, not something a pipeline should invent.
 
@@ -148,7 +147,7 @@ The API key used with `--auto-create` must have the following TestCollab permiss
 | **Test Plan: Create** | To create the CI test plan |
 | **Test Plan Folder: Create** | To create the "CI" folder |
 | **Test Plan: Assign** | To assign test cases to the current user |
-| **Build: View** | To find the build for `--build` / `--build-id` |
+| **Build: View** | To find the build named by `--build` |
 | **Build: Create** | To create the build when `--build` names a version that does not exist yet |
 | **Project: Read** | Basic project access |
 
@@ -168,12 +167,12 @@ Options:
   --api-url <url>       TestCollab API base URL (default: https://api.testcollab.io)
   --skip-missing        Mark unmatched plan cases as skipped (default: false)
   --auto-create         Auto-create all missing resources from result file
-  --build <version>     Build version the results were run against (requires --auto-create)
-  --build-id <id>       Existing build to link the plan to (alternative to --build)
-  --environment <name>  Environment recorded on the build created by --build
+  --build <idOrVersion> Build the results were run against, by id or version
+                        (requires --auto-create)
+  --environment <name>  Environment recorded on the build when --build creates it
 ```
 
-**Note:** `--test-plan-id` and `--auto-create` are mutually exclusive, as are `--build` and `--build-id`.
+**Note:** `--test-plan-id` and `--auto-create` are mutually exclusive, and `--build` requires `--auto-create`.
 
 ## Examples
 
