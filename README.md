@@ -248,6 +248,9 @@ tc report --project <id> --test-plan-id <id> --format <mochawesome|junit> --resu
 | `--api-url <url>` | No | API base URL override (default: `https://api.testcollab.io`). Use `https://api-eu.testcollab.io` for EU region. |
 | `--skip-missing` | No | Mark test cases in the test plan but not in the result file as **skipped** |
 | `--auto-create` | * | Auto-create tag, suites, test cases, folder, and test plan from result file |
+| `--build <version>` | No | Build version the results were run against. Created if no build records it yet. Requires `--auto-create`. |
+| `--build-id <id>` | No | Link to an existing build by id instead of by version. Requires `--auto-create`. |
+| `--environment <name>` | No | Environment recorded on the build that `--build` creates (e.g. `Staging`) |
 
 > \* Either `--test-plan-id` or `--auto-create` is required (they are mutually exclusive).
 
@@ -274,6 +277,7 @@ tc report \
 | Test cases | From test names in result file | Once (matched by ID or title on subsequent runs) |
 | Test plan folder | `CI` | Once |
 | Test plan | `CI Run: DD-MM-YYYY HH:MM` | Every run |
+| Build | From `--build <version>` | Once per version (reused on later runs) |
 
 **How test matching works:**
 
@@ -293,6 +297,25 @@ Both modes can coexist in the same result file. Some tests can have IDs while ot
 | `user_profile_spec` | `User Profile` |
 
 **Required permissions:** The API key must have permissions to create tags, suites, test cases, test plans, test plan folders, and assign test plans. Typically the **Admin** or **Lead** role. See [docs/auto-create.md](docs/auto-create.md) for the full list.
+
+#### `--build` — tie the results to the version that was deployed
+
+Pass the version your pipeline just deployed and the auto-created plan is linked to that build, so the results show up in the build's traceability view and in release readiness:
+
+```bash
+tc report \
+  --project 123 \
+  --format junit \
+  --result-file ./results.xml \
+  --auto-create \
+  --build "$BUILD_VERSION" \
+  --environment Staging
+```
+
+- A build is simply a record of a version that was deployed, so if no build in the project has that version yet it is **created** from the version (and `--environment`, when given). An existing build with that version is reused, and `--environment` is then ignored — the build already says which environment it is.
+- Use `--build-id <id>` instead when the pipeline already knows the build id. The id must belong to `--project`; nothing is created if it does not.
+- A **release is never created**. The plan picks up a release when one of the project's releases has a version pattern matching the build (for example pattern `2.14.*` and build `2.14.9`); otherwise the plan simply has no release. Releases stay a planning decision someone makes in TestCollab.
+- Both options require `--auto-create`. A plan passed with `--test-plan-id` keeps whatever build it was already given.
 
 #### `--skip-missing`
 
@@ -526,12 +549,15 @@ jobs:
       - run: PLAYWRIGHT_JUNIT_OUTPUT_NAME=results.xml npx playwright test --reporter=junit
 
       # Upload results — auto-creates everything in TestCollab
+      # --build ties the plan to the version that was tested (drop it if you
+      # don't track builds)
       - run: |
           tc report \
             --project ${{ secrets.TC_PROJECT_ID }} \
             --format junit \
             --result-file results.xml \
-            --auto-create
+            --auto-create \
+            --build ${{ github.sha }}
 ```
 
 #### Upload test results (manual plan — for full control)
@@ -630,7 +656,7 @@ test-and-report:
     - npm install -g @testcollab/cli && npm ci
   script:
     - PLAYWRIGHT_JUNIT_OUTPUT_NAME=results.xml npx playwright test --reporter=junit
-    - tc report --project $TC_PROJECT_ID --format junit --result-file results.xml --auto-create
+    - tc report --project $TC_PROJECT_ID --format junit --result-file results.xml --auto-create --build "$CI_COMMIT_SHORT_SHA" --environment Staging
 ```
 
 #### Upload test results (manual plan)

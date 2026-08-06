@@ -18,12 +18,12 @@ import {
   TestCasesApi,
   SuitesApi,
   TestPlanFoldersApi,
-  TestPlansApi,
   TestPlanTestCasesApi,
   TestPlansAssignmentApi,
   UsersApi,
   ProjectsApi
 } from 'testcollab-sdk';
+import { resolveBuild } from '../lib/builds.js';
 
 const RUN_RESULT_MAP = {
   pass: 1,
@@ -1325,16 +1325,25 @@ function createSdkConfig(apiKey, apiUrl) {
  * Creates all missing TestCollab resources (tag, suites, test cases, folder, test plan)
  * from the parsed test result file, then returns the new test plan ID.
  *
- * Uses testcollab-sdk (same pattern as createTestPlan.js).
+ * Uses testcollab-sdk (same pattern as createTestPlan.js), except for the test
+ * plan create — see step 9.
  */
-async function autoCreateTestPlan({ apiKey, apiUrl, projectId, parsedReport }) {
+async function autoCreateTestPlan({
+  apiKey,
+  apiUrl,
+  projectId,
+  parsedReport,
+  buildVersion,
+  buildId,
+  environment
+}) {
   const config = createSdkConfig(apiKey, apiUrl);
+  const effectiveApiUrl = getBaseApiUrl(apiUrl);
 
   const usersApi = new UsersApi(config);
   const testCasesApi = new TestCasesApi(config);
   const suitesApi = new SuitesApi(config);
   const foldersApi = new TestPlanFoldersApi(config);
-  const testPlansApi = new TestPlansApi(config);
   const testPlanCasesApi = new TestPlanTestCasesApi(config);
   const testPlanAssignmentApi = new TestPlansAssignmentApi(config);
 
@@ -1349,6 +1358,21 @@ async function autoCreateTestPlan({ apiKey, apiUrl, projectId, parsedReport }) {
   const currentUser = await usersApi.getMyUser();
   if (!currentUser || !currentUser.id) {
     throw new Error('Failed to fetch current user. Check your API key.');
+  }
+
+  // TCV-6789: resolve the build before anything is created, so a wrong build id
+  // or a missing build permission fails the run before it leaves half-created
+  // suites and test cases behind.
+  let build = null;
+  if (buildVersion || buildId) {
+    build = await resolveBuild({
+      baseApiUrl: effectiveApiUrl,
+      token: apiKey,
+      projectId,
+      buildVersion,
+      buildId,
+      environment
+    });
   }
 
   // 2. Find or create "CI Imported" tag
@@ -1435,7 +1459,6 @@ async function autoCreateTestPlan({ apiKey, apiUrl, projectId, parsedReport }) {
   // TCV-6489: The SDK's getTestCases does not support suite as a direct query
   // parameter, and passing it via _filter causes a 500 from the API. Use a
   // direct fetch with the suite query parameter instead.
-  const effectiveApiUrl = getBaseApiUrl(apiUrl);
   const testCasesBySuite = {};
   const leafSuiteIds = new Set();
   for (const t of allTests) {
@@ -1569,22 +1592,42 @@ async function autoCreateTestPlan({ apiKey, apiUrl, projectId, parsedReport }) {
   }
 
   // 9. Create test plan
+  // TCV-6789: the published SDK predates Builds, and its TestPlanPayload
+  // serializer drops fields it does not know about, so `build` would never reach
+  // the API through addTestPlan(). Post the same payload directly instead — the
+  // API links the plan to the build (and, from TCV-6787, to the build's release)
+  // as part of this one call.
   const planTitle = `CI Run: ${getFormattedDate()}`;
-  const newPlan = await testPlansApi.addTestPlan({
-    testPlanPayload: {
-      project: projectId,
-      title: planTitle,
-      description: 'Auto-created by tc-cli --auto-create',
-      status: 1,
-      priority: 1,
-      testPlanFolder: ciFolder.id,
-      customFields: []
-    }
-  });
-  if (newPlan && newPlan.status === false) {
-    throw new Error(newPlan.title || 'Failed to create test plan');
+  const planPayload = {
+    project: projectId,
+    title: planTitle,
+    description: 'Auto-created by tc-cli --auto-create',
+    status: 1,
+    priority: 1,
+    test_plan_folder: ciFolder.id,
+    custom_fields: []
+  };
+  if (build) {
+    planPayload.build = build.id;
   }
-  console.log(`   ✓ Test Plan "${planTitle}" (id: ${newPlan.id})`);
+  const planResponse = await fetch(
+    `${effectiveApiUrl}/testplans?token=${encodeURIComponent(apiKey)}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(planPayload)
+    }
+  );
+  if (!planResponse.ok) {
+    const body = await planResponse.text().catch(() => '');
+    throw new Error(`Failed to create test plan: HTTP ${planResponse.status} ${body}`);
+  }
+  const newPlan = await planResponse.json();
+  if (newPlan && newPlan.status === false) {
+    throw new Error(newPlan.message || newPlan.title || 'Failed to create test plan');
+  }
+  const buildNote = build ? `, build: ${build.version}` : '';
+  console.log(`   ✓ Test Plan "${planTitle}" (id: ${newPlan.id}${buildNote})`);
 
   // 10. Bulk-add test cases by tag
   const addResult = await testPlanCasesApi.bulkAddTestPlanTestCases({
@@ -1638,7 +1681,10 @@ export async function report(options) {
     resultFile,
     apiUrl,
     skipMissing,
-    autoCreate
+    autoCreate,
+    build,
+    buildId,
+    environment
   } = options;
 
   // Resolve API key: --api-key flag takes precedence, then TESTCOLLAB_TOKEN env var
@@ -1676,6 +1722,37 @@ export async function report(options) {
     parsedTestPlanId = Number(testPlanId);
     if (Number.isNaN(parsedTestPlanId)) {
       console.error('❌ Error: --test-plan-id must be a number');
+      process.exit(1);
+    }
+  }
+
+  // TCV-6789: the build ties the plan to the version that was deployed, so it
+  // only applies to the plan --auto-create makes — an existing plan passed via
+  // --test-plan-id keeps whatever build it was already given.
+  // An empty --build is a pipeline variable that did not resolve; fail rather
+  // than quietly producing a plan with no build.
+  if (build !== undefined && !String(build).trim()) {
+    console.error('❌ Error: --build requires a build version');
+    process.exit(1);
+  }
+  if (build && buildId) {
+    console.error('❌ Error: --build and --build-id are mutually exclusive');
+    process.exit(1);
+  }
+  if ((build || buildId) && !autoCreate) {
+    console.error('❌ Error: --build and --build-id require --auto-create');
+    process.exit(1);
+  }
+  if (environment && !build) {
+    console.error('❌ Error: --environment only applies to the build created by --build');
+    process.exit(1);
+  }
+
+  let parsedBuildId = null;
+  if (buildId) {
+    parsedBuildId = Number(buildId);
+    if (!Number.isInteger(parsedBuildId) || parsedBuildId <= 0) {
+      console.error('❌ Error: --build-id must be a build id');
       process.exit(1);
     }
   }
@@ -1722,7 +1799,10 @@ export async function report(options) {
         apiKey: String(apiKey),
         apiUrl,
         projectId: parsedProjectId,
-        parsedReport
+        parsedReport,
+        buildVersion: build,
+        buildId: parsedBuildId,
+        environment
       });
       effectiveTestPlanId = autoResult.testPlanId;
     }
