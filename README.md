@@ -39,6 +39,7 @@ tc sync --project 123
 
 | Command | What it does |
 |---------|-------------|
+| [`tc createBuild`](#tc-createbuild) | Record the build your pipeline just produced or deployed |
 | [`tc createTestPlan`](#tc-createtestplan) | Create a test plan and assign tagged cases |
 | [`tc getTestPlan`](#tc-gettestplan) | Fetch a test plan as JSON for agent-driven execution |
 | [`tc report`](#tc-report) | Upload Mochawesome or JUnit results (with `--auto-create` or to an existing plan) |
@@ -46,6 +47,72 @@ tc sync --project 123
 | [`tc sync`](#tc-sync) | Sync `.feature` files from Git to TestCollab (designed for CI/CD, works locally too) |
 
 The simplest workflow is **run your tests → `report --auto-create`**. For more control, use **createTestPlan → run your tests → report**. For agent-driven execution of human-curated test plans, see the [Agentic QA Guide](docs/agentic-qa.md). To use [Hermes Agent](https://github.com/NousResearch/hermes-agent) as your QA executor with browser automation, see the [Hermes Agent Integration](docs/hermes-agent.md).
+
+---
+
+### `tc createBuild`
+
+Records the version your pipeline just built or deployed as a **build** in TestCollab, so the version under test is captured at deploy time and results stay traceable to it. Run it as one step in whichever pipeline does the deploy — Azure DevOps, GitLab CI, Jenkins and GitHub Actions all work the same way, and TestCollab needs no access to your DevOps environment.
+
+```bash
+tc createBuild \
+  --project <id> \
+  --version <version> \
+  [--environment <name>] \
+  [--deployment-url <url>] \
+  [--commit <sha>] \
+  [--notes <text>] \
+  [--api-key <key>] \
+  [--api-url <url>]
+```
+
+| Option | Required | Description |
+|--------|----------|-------------|
+| `--project <id>` | Yes | Project ID |
+| `--version <version>` | Yes | Version that was built or deployed (e.g. `2026.8.6-rc1`) |
+| `--environment <name>` | No | Environment it was deployed to (e.g. `staging`) |
+| `--deployment-url <url>` | No | Link back to the pipeline run — shown as the deployment link on the build |
+| `--commit <sha>` | No | Commit SHA the build was produced from |
+| `--notes <text>` | No | Free-text note about the build |
+| `--api-key <key>` | No | TestCollab API key (or set `TESTCOLLAB_TOKEN` env var) |
+| `--api-url <url>` | No | API base URL (default: `https://api.testcollab.io`). Use `https://api-eu.testcollab.io` for EU region. |
+
+**Output:** Writes the build ID to `tmp/tc_build` as `TESTCOLLAB_BUILD_ID=<id>`, so later steps can reference it (the same way `createTestPlan` writes `tmp/tc_test_plan`).
+
+- The build is **matched on version first and only created when it is missing**, so a re-run of the pipeline — or several jobs of the same run — never records the same version twice. A leading `v` is ignored when matching, so `v2.14.0` and `2.14.0` are one build.
+- An existing build is **reused as-is**: a later stage never overwrites what the deploy stage recorded. Anything you pass that differs is reported and left unapplied.
+- If the version matches a **release**'s version pattern, TestCollab attaches the build to that release. The CLI never creates a release.
+
+#### Every value is a standard CI variable
+
+The command is a one-liner in a pipeline file because each option maps to a variable the pipeline already has:
+
+| Option | Azure DevOps | GitLab CI | GitHub Actions | Jenkins |
+|--------|--------------|-----------|----------------|---------|
+| `--version` | `$(Build.BuildNumber)` | `$CI_COMMIT_TAG` / `$CI_PIPELINE_IID` | `${{ github.run_number }}` | `$BUILD_NUMBER` |
+| `--environment` | `$(Environment.Name)` | `$CI_ENVIRONMENT_NAME` | `${{ github.event.deployment.environment }}` | `$DEPLOY_ENV` |
+| `--deployment-url` | `$(System.CollectionUri)$(System.TeamProject)/_build/results?buildId=$(Build.BuildId)` | `$CI_PIPELINE_URL` | `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}` | `$BUILD_URL` |
+| `--commit` | `$(Build.SourceVersion)` | `$CI_COMMIT_SHA` | `${{ github.sha }}` | `$GIT_COMMIT` |
+
+```yaml
+# Azure DevOps — after the deploy step
+- script: |
+    npx @testcollab/cli createBuild \
+      --project $(TC_PROJECT_ID) \
+      --version "$(Build.BuildNumber)" \
+      --environment "$(Environment.Name)" \
+      --commit "$(Build.SourceVersion)" \
+      --deployment-url "$(System.CollectionUri)$(System.TeamProject)/_build/results?buildId=$(Build.BuildId)"
+  env:
+    TESTCOLLAB_TOKEN: $(TESTCOLLAB_TOKEN)
+  displayName: Record build in TestCollab
+```
+
+Then run the tests against it, referencing the same version:
+
+```bash
+tc createTestPlan --project 45 --ci-tag-id 12 --assignee-id 7 --build "$(Build.BuildNumber)"
+```
 
 ---
 
@@ -86,7 +153,7 @@ tc createTestPlan --project 45 --ci-tag-id 12 --assignee-id 7 --build "$APP_VERS
 ```
 
 - `--build` accepts either a **build ID** or a **version string**. A numeric value is looked up as an ID first and retried as a version, so a numeric version (e.g. a build number) works too.
-- The build must already exist in TestCollab. If nothing matches, the command **fails with a clear message and creates no plan**, rather than leaving an unlinked plan behind — record the build first (Test plans → Builds, or your CI build sync) and re-run.
+- The build must already exist in TestCollab. If nothing matches, the command **fails with a clear message and creates no plan**, rather than leaving an unlinked plan behind — record the build first with [`tc createBuild`](#tc-createbuild) (or in the app under Test plans → Builds) and re-run.
 - If several builds share the version, the command asks you to pass the build ID instead.
 - Passing only `--build` is enough when the build belongs to a release: TestCollab fills the plan's release in from the build. Passing only `--release` links the release with no build attached.
 

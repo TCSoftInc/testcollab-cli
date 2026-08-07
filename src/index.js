@@ -10,6 +10,7 @@
 import { Command } from 'commander';
 import { featuresync } from './commands/featuresync.js';
 import { createTestPlan } from './commands/createTestPlan.js';
+import { createBuild } from './commands/createBuild.js';
 import { report } from './commands/report.js';
 import { getTestPlan } from './commands/getTestPlan.js';
 import { gate } from './commands/gate.js';
@@ -20,7 +21,11 @@ const program = new Command();
 program
   .name('tc')
   .description('TestCollab CLI - Command-line interface for TestCollab operations')
-  .version('1.0.0');
+  .version('1.0.0')
+  // TCV-6794: only treat `tc`'s own options (-V/--version, -h) as such before the
+  // subcommand name, so `tc createBuild --version <build version>` reaches the
+  // command instead of printing the CLI version. `tc --version` still works.
+  .enablePositionalOptions();
 
 // Add sync command
 program
@@ -43,6 +48,20 @@ program
   .option('--release <id>', 'Release ID the plan belongs to')
   .option('--api-url <url>', 'TestCollab API base URL', 'https://api.testcollab.io')
   .action(createTestPlan);
+
+// Add createBuild command (TCV-6794)
+program
+  .command('createBuild')
+  .description('Record the build your pipeline just produced or deployed, so results are traceable to it')
+  .option('--api-key <key>', 'TestCollab API key (or set TESTCOLLAB_TOKEN env var)')
+  .requiredOption('--project <id>', 'TestCollab project ID')
+  .requiredOption('--version <version>', 'Version that was built or deployed')
+  .option('--environment <name>', 'Environment it was deployed to')
+  .option('--deployment-url <url>', 'Link to the pipeline run or deployment')
+  .option('--commit <sha>', 'Commit SHA the build was produced from')
+  .option('--notes <text>', 'Free-text note about the build')
+  .option('--api-url <url>', 'TestCollab API base URL', 'https://api.testcollab.io')
+  .action(createBuild);
 
 // Add report command
 program
