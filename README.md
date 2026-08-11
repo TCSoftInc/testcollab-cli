@@ -39,6 +39,7 @@ tc sync --project 123
 
 | Command | What it does |
 |---------|-------------|
+| [`tc createBuild`](#tc-createbuild) | Record the build your pipeline just produced or deployed |
 | [`tc createTestPlan`](#tc-createtestplan) | Create a test plan and assign tagged cases |
 | [`tc getTestPlan`](#tc-gettestplan) | Fetch a test plan as JSON for agent-driven execution |
 | [`tc report`](#tc-report) | Upload Mochawesome or JUnit results (with `--auto-create` or to an existing plan) |
@@ -46,6 +47,72 @@ tc sync --project 123
 | [`tc sync`](#tc-sync) | Sync `.feature` files from Git to TestCollab (designed for CI/CD, works locally too) |
 
 The simplest workflow is **run your tests → `report --auto-create`**. For more control, use **createTestPlan → run your tests → report**. For agent-driven execution of human-curated test plans, see the [Agentic QA Guide](docs/agentic-qa.md). To use [Hermes Agent](https://github.com/NousResearch/hermes-agent) as your QA executor with browser automation, see the [Hermes Agent Integration](docs/hermes-agent.md).
+
+---
+
+### `tc createBuild`
+
+Records the version your pipeline just built or deployed as a **build** in TestCollab, so the version under test is captured at deploy time and results stay traceable to it. Run it as one step in whichever pipeline does the deploy — Azure DevOps, GitLab CI, Jenkins and GitHub Actions all work the same way, and TestCollab needs no access to your DevOps environment.
+
+```bash
+tc createBuild \
+  --project <id> \
+  --version <version> \
+  [--environment <name>] \
+  [--deployment-url <url>] \
+  [--commit <sha>] \
+  [--notes <text>] \
+  [--api-key <key>] \
+  [--api-url <url>]
+```
+
+| Option | Required | Description |
+|--------|----------|-------------|
+| `--project <id>` | Yes | Project ID |
+| `--version <version>` | Yes | Version that was built or deployed (e.g. `2026.8.6-rc1`) |
+| `--environment <name>` | No | Environment it was deployed to (e.g. `staging`) |
+| `--deployment-url <url>` | No | Link back to the pipeline run — shown as the deployment link on the build |
+| `--commit <sha>` | No | Commit SHA the build was produced from |
+| `--notes <text>` | No | Free-text note about the build |
+| `--api-key <key>` | No | TestCollab API key (or set `TESTCOLLAB_TOKEN` env var) |
+| `--api-url <url>` | No | API base URL (default: `https://api.testcollab.io`). Use `https://api-eu.testcollab.io` for EU region. |
+
+**Output:** Writes the build ID to `tmp/tc_build` as `TESTCOLLAB_BUILD_ID=<id>`, so later steps can reference it (the same way `createTestPlan` writes `tmp/tc_test_plan`).
+
+- The build is **matched on version first and only created when it is missing**, so a re-run of the pipeline — or several jobs of the same run — never records the same version twice. A leading `v` is ignored when matching, so `v2.14.0` and `2.14.0` are one build.
+- An existing build is **reused as-is**: a later stage never overwrites what the deploy stage recorded. Anything you pass that differs is reported and left unapplied.
+- If the version matches a **release**'s version pattern, TestCollab attaches the build to that release. The CLI never creates a release.
+
+#### Every value is a standard CI variable
+
+The command is a one-liner in a pipeline file because each option maps to a variable the pipeline already has:
+
+| Option | Azure DevOps | GitLab CI | GitHub Actions | Jenkins |
+|--------|--------------|-----------|----------------|---------|
+| `--version` | `$(Build.BuildNumber)` | `$CI_COMMIT_TAG` / `$CI_PIPELINE_IID` | `${{ github.run_number }}` | `$BUILD_NUMBER` |
+| `--environment` | `$(Environment.Name)` | `$CI_ENVIRONMENT_NAME` | `${{ github.event.deployment.environment }}` | `$DEPLOY_ENV` |
+| `--deployment-url` | `$(System.CollectionUri)$(System.TeamProject)/_build/results?buildId=$(Build.BuildId)` | `$CI_PIPELINE_URL` | `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}` | `$BUILD_URL` |
+| `--commit` | `$(Build.SourceVersion)` | `$CI_COMMIT_SHA` | `${{ github.sha }}` | `$GIT_COMMIT` |
+
+```yaml
+# Azure DevOps — after the deploy step
+- script: |
+    npx @testcollab/cli createBuild \
+      --project $(TC_PROJECT_ID) \
+      --version "$(Build.BuildNumber)" \
+      --environment "$(Environment.Name)" \
+      --commit "$(Build.SourceVersion)" \
+      --deployment-url "$(System.CollectionUri)$(System.TeamProject)/_build/results?buildId=$(Build.BuildId)"
+  env:
+    TESTCOLLAB_TOKEN: $(TESTCOLLAB_TOKEN)
+  displayName: Record build in TestCollab
+```
+
+Then run the tests against it, referencing the same version:
+
+```bash
+tc createTestPlan --project 45 --ci-tag-id 12 --assignee-id 7 --build "$(Build.BuildNumber)"
+```
 
 ---
 
@@ -58,6 +125,8 @@ tc createTestPlan \
   --project <id> \
   --ci-tag-id <id> \
   --assignee-id <id> \
+  [--build <idOrVersion>] \
+  [--release <id>] \
   [--api-key <key>] \
   [--api-url <url>]
 ```
@@ -67,10 +136,26 @@ tc createTestPlan \
 | `--project <id>` | Yes | Project ID |
 | `--ci-tag-id <id>` | Yes | Tag ID — test cases with this tag are added to the plan |
 | `--assignee-id <id>` | Yes | User ID to assign the plan execution to |
+| `--build <idOrVersion>` | No | Build the plan is executed against — a build ID or a version string (e.g. `2026.8.6-rc1`). Results are then traceable to that build. |
+| `--release <id>` | No | Release ID the plan belongs to |
 | `--api-key <key>` | No | TestCollab API key (or set `TESTCOLLAB_TOKEN` env var) |
 | `--api-url <url>` | No | API base URL (default: `https://api.testcollab.io`). Use `https://api-eu.testcollab.io` for EU region. |
 
 **Output:** Writes the created plan ID to `tmp/tc_test_plan` as `TESTCOLLAB_TEST_PLAN_ID=<id>`. You can source this file in subsequent CI steps.
+
+#### Tying the plan to the version it tests
+
+A pipeline that has just deployed a build can create its plan against that build in the same run, so the results carry the deployment context through to the build traceability views and release readiness:
+
+```bash
+# the version your pipeline just deployed — no need to look up a build ID first
+tc createTestPlan --project 45 --ci-tag-id 12 --assignee-id 7 --build "$APP_VERSION"
+```
+
+- `--build` accepts either a **build ID** or a **version string**. A numeric value is looked up as an ID first and retried as a version, so a numeric version (e.g. a build number) works too.
+- The build must already exist in TestCollab. If nothing matches, the command **fails with a clear message and creates no plan**, rather than leaving an unlinked plan behind — record the build first with [`tc createBuild`](#tc-createbuild) (or in the app under Test plans → Builds) and re-run.
+- If several builds share the version, the command asks you to pass the build ID instead.
+- Passing only `--build` is enough when the build belongs to a release: TestCollab fills the plan's release in from the build. Passing only `--release` links the release with no build attached.
 
 ---
 
@@ -163,6 +248,8 @@ tc report --project <id> --test-plan-id <id> --format <mochawesome|junit> --resu
 | `--api-url <url>` | No | API base URL override (default: `https://api.testcollab.io`). Use `https://api-eu.testcollab.io` for EU region. |
 | `--skip-missing` | No | Mark test cases in the test plan but not in the result file as **skipped** |
 | `--auto-create` | * | Auto-create tag, suites, test cases, folder, and test plan from result file |
+| `--build <idOrVersion>` | No | Build the results were run against, by id or version. A version with no build yet is created as one. Requires `--auto-create`. |
+| `--environment <name>` | No | Environment recorded on the build when `--build` creates it (e.g. `Staging`) |
 
 > \* Either `--test-plan-id` or `--auto-create` is required (they are mutually exclusive).
 
@@ -189,6 +276,7 @@ tc report \
 | Test cases | From test names in result file | Once (matched by ID or title on subsequent runs) |
 | Test plan folder | `CI` | Once |
 | Test plan | `CI Run: DD-MM-YYYY HH:MM` | Every run |
+| Build | From `--build <version>` | Once per version (reused on later runs) |
 
 **How test matching works:**
 
@@ -208,6 +296,26 @@ Both modes can coexist in the same result file. Some tests can have IDs while ot
 | `user_profile_spec` | `User Profile` |
 
 **Required permissions:** The API key must have permissions to create tags, suites, test cases, test plans, test plan folders, and assign test plans. Typically the **Admin** or **Lead** role. See [docs/auto-create.md](docs/auto-create.md) for the full list.
+
+#### `--build` — tie the results to the version that was deployed
+
+Pass the version your pipeline just deployed and the auto-created plan is linked to that build, so the results show up in the build's traceability view and in release readiness:
+
+```bash
+tc report \
+  --project 123 \
+  --format junit \
+  --result-file ./results.xml \
+  --auto-create \
+  --build "$BUILD_VERSION" \
+  --environment Staging
+```
+
+- `--build` takes a **build id or a version string**, the same as [`tc createTestPlan`](#tc-createtestplan). A numeric value is looked up as an id first and retried as a version, so numeric versions and build numbers work too.
+- A build is simply a record of a version that was deployed, so if no build in the project has that version yet it is **created** from the version (and `--environment`, when given). An existing build is reused, and `--environment` is then ignored — the build already says which environment it is.
+- If several builds in the project share the version, the command stops and asks for an id rather than guessing which one the results belong to. An id belonging to another project also stops the run, rather than being recorded as a new version.
+- A **release is never created**. The plan picks up a release when one of the project's releases has a version pattern matching the build (for example pattern `2.14.*` and build `2.14.9`); otherwise the plan simply has no release. Releases stay a planning decision someone makes in TestCollab.
+- `--build` requires `--auto-create`. A plan passed with `--test-plan-id` keeps whatever build it was already given.
 
 #### `--skip-missing`
 
@@ -231,7 +339,13 @@ When using `--test-plan-id` (not `--auto-create`), your test names must include 
 TC-123 Login should succeed            ← prefix
 Login should succeed id-123            ← id- prefix
 Login should succeed testcase-123      ← testcase- prefix
+checkout-42                            ← whole name is a slug ending in the ID
 ```
+
+A marker always wins over the trailing-number form, so `[TC-1730] ... and UTF-8` matches case
+**1730**, not 8. The trailing-number form only applies when the *entire* name is a slug
+(`checkout-42`, `login-flow-123`); a name that merely ends in a hyphenated number, such as
+`Digest uses SHA-256`, carries no ID and needs an explicit marker.
 
 When using `--auto-create`, IDs are optional — tests without IDs are matched by title or created automatically.
 
@@ -435,12 +549,15 @@ jobs:
       - run: PLAYWRIGHT_JUNIT_OUTPUT_NAME=results.xml npx playwright test --reporter=junit
 
       # Upload results — auto-creates everything in TestCollab
+      # --build ties the plan to the version that was tested (drop it if you
+      # don't track builds)
       - run: |
           tc report \
             --project ${{ secrets.TC_PROJECT_ID }} \
             --format junit \
             --result-file results.xml \
-            --auto-create
+            --auto-create \
+            --build ${{ github.sha }}
 ```
 
 #### Upload test results (manual plan — for full control)
@@ -458,6 +575,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       TESTCOLLAB_TOKEN: ${{ secrets.TESTCOLLAB_TOKEN }}
+      APP_VERSION: ${{ github.ref_name }}   # the version you just deployed
     steps:
       - uses: actions/checkout@v4
 
@@ -467,12 +585,15 @@ jobs:
 
       - run: npm install -g @testcollab/cli && npm ci
 
-      # Step 1: Create test plan with CI-tagged cases
+      # Step 1: Create test plan with CI-tagged cases, tied to the deployed build
+      #         (--build takes a build ID or a version string; drop it if you
+      #          don't track builds, or use --release <id> on its own)
       - run: |
           tc createTestPlan \
             --project ${{ secrets.TC_PROJECT_ID }} \
             --ci-tag-id ${{ secrets.TC_CI_TAG_ID }} \
-            --assignee-id ${{ secrets.TC_ASSIGNEE_ID }}
+            --assignee-id ${{ secrets.TC_ASSIGNEE_ID }} \
+            --build ${{ env.APP_VERSION }}
 
       # Step 2: Read the created test plan ID
       - run: cat tmp/tc_test_plan >> $GITHUB_ENV
@@ -535,7 +656,7 @@ test-and-report:
     - npm install -g @testcollab/cli && npm ci
   script:
     - PLAYWRIGHT_JUNIT_OUTPUT_NAME=results.xml npx playwright test --reporter=junit
-    - tc report --project $TC_PROJECT_ID --format junit --result-file results.xml --auto-create
+    - tc report --project $TC_PROJECT_ID --format junit --result-file results.xml --auto-create --build "$CI_COMMIT_SHORT_SHA" --environment Staging
 ```
 
 #### Upload test results (manual plan)
@@ -549,7 +670,10 @@ test-and-report:
   before_script:
     - npm install -g @testcollab/cli && npm ci
   script:
-    - tc createTestPlan --project $TC_PROJECT_ID --ci-tag-id $TC_CI_TAG_ID --assignee-id $TC_ASSIGNEE_ID
+    # --build ties the plan to the version this pipeline deployed (build ID or version
+    # string; it must already exist as a build in TestCollab). Omit it, or use
+    # --release <id> instead, if you don't track builds.
+    - tc createTestPlan --project $TC_PROJECT_ID --ci-tag-id $TC_CI_TAG_ID --assignee-id $TC_ASSIGNEE_ID --build $APP_VERSION
     - export $(cat tmp/tc_test_plan)
     - npx cypress run --reporter mochawesome
     - tc report --project $TC_PROJECT_ID --test-plan-id $TESTCOLLAB_TEST_PLAN_ID --format mochawesome --result-file ./mochawesome-report/mochawesome.json

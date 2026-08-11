@@ -13,13 +13,14 @@ tc-cli report --project 123 --format junit --result-file results.xml --auto-crea
 ```
 
 1. Parses your result file (JUnit XML or Mochawesome JSON)
-2. Creates a **"CI Imported"** tag (if it doesn't exist)
-3. Creates **test suites** from suite/class names in the results (if they don't exist)
-4. Creates **test cases** from test names (if they don't exist), matching existing ones by title
-5. Creates a **"CI" folder** for test plans (if it doesn't exist)
-6. Creates a **test plan** (`CI Run: DD-MM-YYYY HH:MM`) under the CI folder
-7. Adds all tagged test cases to the plan and assigns them to the current user
-8. Uploads the test results
+2. Resolves the **build** when `--build` is passed (creating it from the version if no build records it yet)
+3. Creates a **"CI Imported"** tag (if it doesn't exist)
+4. Creates **test suites** from suite/class names in the results (if they don't exist)
+5. Creates **test cases** from test names (if they don't exist), matching existing ones by title
+6. Creates a **"CI" folder** for test plans (if it doesn't exist)
+7. Creates a **test plan** (`CI Run: DD-MM-YYYY HH:MM`) under the CI folder, linked to the build
+8. Adds all tagged test cases to the plan and assigns them to the current user
+9. Uploads the test results
 
 ## Report Command Modes
 
@@ -74,6 +75,30 @@ Auto-create handles mixed results seamlessly. If some tests have TC IDs and othe
 | **Test Cases** | From test names in result file | Only when no match by ID or title exists |
 | **Test Plan Folder** | `CI` | Once per project |
 | **Test Plan** | `CI Run: DD-MM-YYYY HH:MM` | Every run creates a new plan |
+| **Build** | The version passed to `--build` | Only when the value is not a build id and no build has that version |
+
+## Linking Results to a Build
+
+Results that come out of a pipeline belong to a version of the software that was deployed. Pass that version and the auto-created plan is linked to it, so the results roll up into the build's traceability view and into release readiness:
+
+```bash
+tc-cli report \
+  --project 42 \
+  --format junit \
+  --result-file results.xml \
+  --auto-create \
+  --build 2.14.9 \
+  --environment Staging
+```
+
+- **`--build <idOrVersion>`** — the build the results were run against, given as a build id or as the version the pipeline just deployed. Reading it the same way as `tc createTestPlan` (TCV-6788): a numeric value is looked up as an id first and retried as a version, so numeric versions and build numbers work too. A build is simply a record of a deployed version, so if the project has no build with that version yet, one is created from the version and `--environment`. An existing build is reused as-is, and `--environment` is ignored (with a warning) because the build already records its environment. If several builds share the version, the command stops and asks for an id rather than guessing, and an id belonging to another project stops the run rather than being recorded as a new version.
+- **`--environment <name>`** — only meaningful alongside `--build`, and only used when the build is created.
+
+`--build` requires `--auto-create`. A plan passed with `--test-plan-id` already exists and keeps whatever build it was given.
+
+**Releases are never created.** The plan gets a release only when one of the project's releases has a version pattern that matches the build (e.g. pattern `2.14.*` matching build `2.14.9`); otherwise the plan has no release. A release is a planning decision someone makes in TestCollab, not something a pipeline should invent.
+
+If the version is not resolved when the pipeline runs (an unset variable, so `--build ""`), the command fails rather than quietly uploading results with no build attached.
 
 ## Suite Name Humanization
 
@@ -122,6 +147,8 @@ The API key used with `--auto-create` must have the following TestCollab permiss
 | **Test Plan: Create** | To create the CI test plan |
 | **Test Plan Folder: Create** | To create the "CI" folder |
 | **Test Plan: Assign** | To assign test cases to the current user |
+| **Build: View** | To find the build named by `--build` |
+| **Build: Create** | To create the build when `--build` names a version that does not exist yet |
 | **Project: Read** | Basic project access |
 
 If any permission is missing, the command will fail with an error from the API. Check with your TestCollab admin to ensure your role has these permissions.
@@ -140,9 +167,12 @@ Options:
   --api-url <url>       TestCollab API base URL (default: https://api.testcollab.io)
   --skip-missing        Mark unmatched plan cases as skipped (default: false)
   --auto-create         Auto-create all missing resources from result file
+  --build <idOrVersion> Build the results were run against, by id or version
+                        (requires --auto-create)
+  --environment <name>  Environment recorded on the build when --build creates it
 ```
 
-**Note:** `--test-plan-id` and `--auto-create` are mutually exclusive.
+**Note:** `--test-plan-id` and `--auto-create` are mutually exclusive, and `--build` requires `--auto-create`.
 
 ## Examples
 
@@ -178,7 +208,8 @@ tc-cli report \
       --project 42 \
       --format junit \
       --result-file test-results.xml \
-      --auto-create
+      --auto-create \
+      --build ${{ github.sha }}
 ```
 
 ## Subsequent Runs
@@ -188,6 +219,7 @@ On subsequent runs with `--auto-create`:
 - The **"CI Imported" tag** is reused (found by name)
 - **Existing suites** are reused (matched by humanized title)
 - **Existing test cases** are reused (matched by ID if present, or by normalized title within the same suite)
+- An **existing build** with the same `--build` version is reused; a new version creates a new build
 - A **new test plan** is created each time (`CI Run: {timestamp}`)
 - New test cases (from new tests added to your codebase) are automatically created and included
 

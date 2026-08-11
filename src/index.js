@@ -10,6 +10,7 @@
 import { Command } from 'commander';
 import { featuresync } from './commands/featuresync.js';
 import { createTestPlan } from './commands/createTestPlan.js';
+import { createBuild } from './commands/createBuild.js';
 import { report } from './commands/report.js';
 import { getTestPlan } from './commands/getTestPlan.js';
 import { gate } from './commands/gate.js';
@@ -20,7 +21,11 @@ const program = new Command();
 program
   .name('tc')
   .description('TestCollab CLI - Command-line interface for TestCollab operations')
-  .version('1.0.0');
+  .version('1.0.0')
+  // TCV-6794: only treat `tc`'s own options (-V/--version, -h) as such before the
+  // subcommand name, so `tc createBuild --version <build version>` reaches the
+  // command instead of printing the CLI version. `tc --version` still works.
+  .enablePositionalOptions();
 
 // Add sync command
 program
@@ -39,8 +44,28 @@ program
   .requiredOption('--project <id>', 'TestCollab project ID')
   .requiredOption('--ci-tag-id <id>', 'CI tag ID to include cases')
   .requiredOption('--assignee-id <id>', 'User ID to assign execution')
+  .option('--build <idOrVersion>', 'Build ID or version string the plan is executed against')
+  .option('--release <id>', 'Release ID the plan belongs to')
   .option('--api-url <url>', 'TestCollab API base URL', 'https://api.testcollab.io')
   .action(createTestPlan);
+
+// Add createBuild command (TCV-6794)
+program
+  .command('createBuild')
+  .description('Record the build your pipeline just produced or deployed, so results are traceable to it')
+  .option('--api-key <key>', 'TestCollab API key (or set TESTCOLLAB_TOKEN env var)')
+  .requiredOption('--project <id>', 'TestCollab project ID')
+  // TCV-6794: these are read from the CI provider's environment when omitted
+  // (Azure DevOps, GitHub Actions, GitLab CI, Bitbucket, CircleCI, Jenkins).
+  .option('--version <version>', 'Version that was built or deployed (default: the CI build number)')
+  .option('--environment <name>', 'Environment it was deployed to')
+  .option('--deployment-url <url>', 'Link to the pipeline run or deployment (default: from CI)')
+  .option('--commit <sha>', 'Commit SHA the build was produced from (default: from CI)')
+  .option('--commit-url <url>', 'Link to the commit in your VCS (default: from CI, else resolved server-side)')
+  .option('--repo-url <url>', 'Link to the repository the build was produced from (default: from CI)')
+  .option('--notes <text>', 'Free-text note about the build')
+  .option('--api-url <url>', 'TestCollab API base URL', 'https://api.testcollab.io')
+  .action(createBuild);
 
 // Add report command
 program
@@ -54,6 +79,8 @@ program
   .option('--api-url <url>', 'TestCollab API base URL override', 'https://api.testcollab.io')
   .option('--skip-missing', 'Mark test cases in the test plan but not in the result file as skipped', false)
   .option('--auto-create', 'Auto-create missing tag, suites, test cases, folder, and test plan from result file')
+  .option('--build <idOrVersion>', 'Build the results were run against, by id or version; the version is created as a build if no build records it yet (requires --auto-create)')
+  .option('--environment <name>', 'Environment recorded on the build when --build creates it (e.g. Staging)')
   .action(report);
 
 // Add getTestPlan command
