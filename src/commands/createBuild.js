@@ -125,6 +125,12 @@ const BUILD_FIELDS = [
   { option: 'environment', field: 'environment', label: 'Environment' },
   { option: 'deploymentUrl', field: 'build_url', label: 'Deployment URL' },
   { option: 'commit', field: 'commit_sha', label: 'Commit' },
+  // TCV-6794: when the pipeline knows its own VCS URLs it should pass them —
+  // it is free there ($(Build.Repository.Uri) on Azure, CI_PROJECT_URL on GitLab)
+  // and works for providers TestCollab has no connection to. When they are
+  // omitted the server resolves them from the deployment URL where it can.
+  { option: 'commitUrl', field: 'commit_url', label: 'Commit URL' },
+  { option: 'repoUrl', field: 'repo_url', label: 'Repository URL' },
   { option: 'notes', field: 'notes', label: 'Notes' }
 ];
 
