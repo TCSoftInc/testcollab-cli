@@ -316,7 +316,13 @@ When using `--test-plan-id` (not `--auto-create`), your test names must include 
 TC-123 Login should succeed            ← prefix
 Login should succeed id-123            ← id- prefix
 Login should succeed testcase-123      ← testcase- prefix
+checkout-42                            ← whole name is a slug ending in the ID
 ```
+
+A marker always wins over the trailing-number form, so `[TC-1730] ... and UTF-8` matches case
+**1730**, not 8. The trailing-number form only applies when the *entire* name is a slug
+(`checkout-42`, `login-flow-123`); a name that merely ends in a hyphenated number, such as
+`Digest uses SHA-256`, carries no ID and needs an explicit marker.
 
 When using `--auto-create`, IDs are optional — tests without IDs are matched by title or created automatically.
 

@@ -46,6 +46,11 @@ const TC_ID_PATTERNS = [
   /\btestcase-(\d+)\b/i
 ];
 
+// TCV-6812: undocumented fallback for names with no TC marker at all. Anchored at both
+// ends and limited to word characters between hyphens, so it only fires on slug-style
+// names ("checkout-42") and never on prose or dotted class names ("com.app.UTF-8").
+const BARE_SLUG_ID_PATTERN = /^[A-Za-z0-9_]+(?:-[A-Za-z0-9_]+)*-(\d+)$/;
+
 const CONFIG_ID_PATTERNS = [
   /\bconfig-id-(\d+)\b/i,
   /\bconfig-(\d+)\b/i,
@@ -276,17 +281,24 @@ export function extractConfigIdFromText(text) {
 export function extractTestCaseIdFromTitle(title) {
   const normalizedTitle = String(title || '');
 
-  const suffix = normalizedTitle.split('-').pop();
-  if (suffix && /^\d+$/.test(suffix)) {
-    return suffix;
-  }
-
+  // TCV-6812: explicit markers are checked FIRST. They used to be checked after a
+  // bare "trailing -<digits>" shortcut, so "[TC-1730] ... and UTF-8" resolved to
+  // case 8 and the marker was never examined — writing the result to a stray case.
   for (const pattern of TC_ID_PATTERNS) {
     const match = normalizedTitle.match(pattern);
     if (match && match[1]) {
       return match[1];
     }
   }
+
+  // TCV-6812: fallback for marker-less slug names ("checkout-42", "login-flow-123").
+  // The WHOLE title must be <slug>-<digits>, so prose that merely ends in a
+  // hyphenated number ("... and UTF-8", "Digest uses SHA-256") is not read as an id.
+  const bareSlugMatch = BARE_SLUG_ID_PATTERN.exec(normalizedTitle.trim());
+  if (bareSlugMatch && bareSlugMatch[1]) {
+    return bareSlugMatch[1];
+  }
+
   return null;
 }
 
