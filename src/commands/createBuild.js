@@ -27,6 +27,8 @@
 
 import fs from 'fs';
 
+import { applyCiEnvironment } from '../utils/ciEnvironment.js';
+
 // Builds shipped after the last `testcollab-sdk` release and its generated
 // payload serializers drop keys they do not know, so these calls are made
 // directly against the REST API (same `?token=` auth the other commands use).
@@ -162,7 +164,23 @@ function warnAboutIgnoredFields(existingBuild, values) {
   });
 }
 
-export async function createBuild(options) {
+export async function createBuild(rawOptions) {
+  // TCV-6794: fill version/commit/repo/deployment details from the CI provider's own
+  // environment variables, so a pipeline only needs `--project`. Anything the user
+  // passed explicitly wins — detection only fills the gaps.
+  const {
+    options,
+    provider: ciProvider,
+    applied: ciApplied
+  } = applyCiEnvironment(rawOptions || {});
+  if (ciProvider) {
+    console.log(
+      ciApplied.length
+        ? `Detected ${ciProvider}; inferred ${ciApplied.join(', ')}`
+        : `Detected ${ciProvider}; every value was supplied explicitly`
+    );
+  }
+
   const { project, version, apiUrl } = options;
 
   // Resolve API key: --api-key flag takes precedence, then TESTCOLLAB_TOKEN env var
@@ -192,7 +210,11 @@ export async function createBuild(options) {
 
   const rawVersion = version === undefined || version === null ? '' : String(version).trim();
   if (!rawVersion) {
-    console.error('❌ Error: --version is required');
+    console.error(
+      ciProvider
+        ? `❌ Error: --version is required (${ciProvider} did not expose a build number)`
+        : '❌ Error: --version is required'
+    );
     console.error('   Pass the version your pipeline built, e.g. --version "$BUILD_BUILDNUMBER".');
     process.exit(1);
   }

@@ -55,12 +55,14 @@ program
   .description('Record the build your pipeline just produced or deployed, so results are traceable to it')
   .option('--api-key <key>', 'TestCollab API key (or set TESTCOLLAB_TOKEN env var)')
   .requiredOption('--project <id>', 'TestCollab project ID')
-  .requiredOption('--version <version>', 'Version that was built or deployed')
+  // TCV-6794: these are read from the CI provider's environment when omitted
+  // (Azure DevOps, GitHub Actions, GitLab CI, Bitbucket, CircleCI, Jenkins).
+  .option('--version <version>', 'Version that was built or deployed (default: the CI build number)')
   .option('--environment <name>', 'Environment it was deployed to')
-  .option('--deployment-url <url>', 'Link to the pipeline run or deployment')
-  .option('--commit <sha>', 'Commit SHA the build was produced from')
-  .option('--commit-url <url>', 'Link to the commit in your VCS (falls back to server-side resolution when omitted)')
-  .option('--repo-url <url>', 'Link to the repository the build was produced from')
+  .option('--deployment-url <url>', 'Link to the pipeline run or deployment (default: from CI)')
+  .option('--commit <sha>', 'Commit SHA the build was produced from (default: from CI)')
+  .option('--commit-url <url>', 'Link to the commit in your VCS (default: from CI, else resolved server-side)')
+  .option('--repo-url <url>', 'Link to the repository the build was produced from (default: from CI)')
   .option('--notes <text>', 'Free-text note about the build')
   .option('--api-url <url>', 'TestCollab API base URL', 'https://api.testcollab.io')
   .action(createBuild);
