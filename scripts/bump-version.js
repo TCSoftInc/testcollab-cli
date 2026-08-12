@@ -2,10 +2,35 @@ import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, '..');
+
+
+// TCV-6794: the git tag is the source of truth for a release. Before this, the tag
+// was ignored entirely: the script read package.json, asked npm for the latest
+// published version and auto-bumped the minor, so releasing `v1.14` published
+// whatever that arithmetic produced. Tags reached v1.14 while npm sat at 1.11.0.
+//
+// Exported for tests — the rest of this file is a script, not a module API.
+export function resolveVersionFromTag(tagRef) {
+  if (!tagRef) return null;
+  // Accept `v1.14`, `1.14`, `refs/tags/v1.14.2`, `v1.14.2-rc1`.
+  const tag = String(tagRef).trim().replace(/^refs\/tags\//, '');
+  const withoutPrefix = tag.replace(/^v/i, '');
+  if (!withoutPrefix) return null;
+
+  const [core, ...rest] = withoutPrefix.split('-');
+  const parts = core.split('.');
+  if (parts.length < 2 || parts.length > 3) return null;
+  if (parts.some((part) => part === '' || !/^\d+$/.test(part))) return null;
+
+  // npm needs a full major.minor.patch, so `v1.14` means `1.14.0`.
+  while (parts.length < 3) parts.push('0');
+  const suffix = rest.length ? `-${rest.join('-')}` : '';
+  return `${parts.join('.')}${suffix}`;
+}
 
 function parseVersion(version) {
   const cleanVersion = version.split('-')[0];
@@ -91,7 +116,13 @@ function updateLockFile(lockPath, newVersion) {
   console.log(`package-lock.json updated to ${newVersion}`);
 }
 
-try {
+// TCV-6794: only run when invoked as a script. Importing this module for its
+// exported helpers must not rewrite package.json — a test that imports it would
+// otherwise bump the version on every run, including in CI.
+const isDirectRun =
+  process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+
+if (isDirectRun) try {
   const packageJsonPath = path.join(rootDir, 'package.json');
   const lockPath = path.join(rootDir, 'package-lock.json');
 
@@ -102,6 +133,36 @@ try {
 
   const publishedVersion = npmView(packageName, process.env.NPM_TOKEN);
   const knownPublished = [publishedVersion].filter(Boolean);
+
+  // A tagged release publishes exactly what the tag says. Nothing is inferred, and
+  // a clash is a hard failure rather than a silent publish under another number —
+  // a version mismatch between the GitHub release and npm is worse than a red build.
+  const tagRef = process.env.RELEASE_TAG || process.env.GITHUB_REF_NAME || '';
+  const taggedVersion = resolveVersionFromTag(tagRef);
+  if (tagRef && !taggedVersion) {
+    throw new Error(
+      `Release tag "${tagRef}" is not a version tag (expected v1.14, 1.14 or v1.14.2).`
+    );
+  }
+  if (taggedVersion) {
+    console.log(`Release tag ${tagRef} -> publishing ${taggedVersion}`);
+    if (knownPublished.includes(taggedVersion)) {
+      throw new Error(
+        `Version ${taggedVersion} is already published to npm. ` +
+          `Tag a new version rather than re-releasing ${tagRef}.`
+      );
+    }
+    if (taggedVersion !== localVersion) {
+      packageJson.version = taggedVersion;
+      writeJson(packageJsonPath, packageJson);
+      console.log(`package.json updated to ${taggedVersion}`);
+    } else {
+      console.log('package.json already matches the tag; no change needed.');
+    }
+    updateLockFile(lockPath, taggedVersion);
+    process.exit(0);
+  }
+  console.log('No release tag in the environment; falling back to npm-derived versioning.');
 
   let baseVersion = localVersion;
   for (const version of knownPublished) {

@@ -17,6 +17,7 @@ import {
   normalizeVersion,
   selectBuildsByVersion
 } from '../src/commands/createBuild.js';
+import { clearCiEnv, restoreCiEnv, withCiEnv } from './utils/ci-env.js';
 
 const API_URL = 'http://api.test';
 const TOKEN = 'token-123';
@@ -71,12 +72,18 @@ function readBuildFile() {
 }
 
 beforeEach(() => {
+  // TCV-6794: createBuild infers values from the CI provider's environment, so
+  // these payload assertions must not inherit the CI the suite runs on. Without
+  // this the suite passes locally and fails on GitHub Actions, where
+  // GITHUB_ACTIONS=true makes detection add commit/repo/run URLs.
+  clearCiEnv();
   jest.spyOn(console, 'log').mockImplementation(() => {});
   jest.spyOn(console, 'warn').mockImplementation(() => {});
   jest.spyOn(console, 'error').mockImplementation(() => {});
 });
 
 afterEach(() => {
+  restoreCiEnv();
   delete global.fetch;
   jest.restoreAllMocks();
   if (fs.existsSync(BUILD_FILE)) fs.unlinkSync(BUILD_FILE);
@@ -298,5 +305,80 @@ describe('createBuild', () => {
     await expect(createBuild(baseOptions)).rejects.toThrow('process.exit(1)');
     expect(exit).toHaveBeenCalledWith(1);
     expect(readBuildFile()).toBeNull();
+  });
+});
+
+// TCV-6794: the unit-level detection rules live in ci-environment.test.js. These
+// cover the wiring — that what was detected actually reaches the request body, and
+// that a flag the pipeline passed is not overwritten by it.
+describe('createBuild + CI detection', () => {
+  const GITHUB = {
+    GITHUB_ACTIONS: 'true',
+    GITHUB_SERVER_URL: 'https://github.com',
+    GITHUB_REPOSITORY: 'TCSoftInc/testcollab-cli',
+    GITHUB_RUN_ID: '99887766',
+    GITHUB_RUN_NUMBER: '42',
+    GITHUB_SHA: 'abc1234def5678'
+  };
+
+  const postBodyFor = async (options) => {
+    let posted = null;
+    mockApi({
+      [`GET /projects/${PROJECT}`]: { id: PROJECT },
+      'GET /builds': [],
+      'POST /builds': (body) => {
+        posted = body;
+        return { id: 55, version: body.version };
+      }
+    });
+    await createBuild(options);
+    return posted;
+  };
+
+  test('records what the provider exposed when only --project is passed', async () => {
+    const posted = await withCiEnv(GITHUB, () =>
+      postBodyFor({ apiKey: TOKEN, apiUrl: API_URL, project: PROJECT })
+    );
+
+    expect(posted.version).toBe('42');
+    expect(posted.commit_sha).toBe('abc1234def5678');
+    expect(posted.repo_url).toBe('https://github.com/TCSoftInc/testcollab-cli');
+    expect(posted.commit_url).toBe(
+      'https://github.com/TCSoftInc/testcollab-cli/commit/abc1234def5678'
+    );
+    expect(posted.build_url).toBe(
+      'https://github.com/TCSoftInc/testcollab-cli/actions/runs/99887766'
+    );
+  });
+
+  test('an explicit flag still wins over what was detected', async () => {
+    const posted = await withCiEnv(GITHUB, () =>
+      postBodyFor({
+        apiKey: TOKEN,
+        apiUrl: API_URL,
+        project: PROJECT,
+        version: 'release-9',
+        commitUrl: 'https://example.test/c/1'
+      })
+    );
+
+    expect(posted.version).toBe('release-9');
+    expect(posted.commit_url).toBe('https://example.test/c/1');
+    // …while the untouched fields are still filled in.
+    expect(posted.commit_sha).toBe('abc1234def5678');
+  });
+
+  test('records nothing extra when not running on a CI provider', async () => {
+    const posted = await postBodyFor({
+      apiKey: TOKEN,
+      apiUrl: API_URL,
+      project: PROJECT,
+      version: '3.2.1'
+    });
+
+    expect(posted.version).toBe('3.2.1');
+    expect(posted).not.toHaveProperty('commit_url');
+    expect(posted).not.toHaveProperty('repo_url');
+    expect(posted).not.toHaveProperty('build_url');
   });
 });
