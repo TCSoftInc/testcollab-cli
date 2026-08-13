@@ -24,6 +24,7 @@ import {
   ProjectsApi
 } from 'testcollab-sdk';
 import { resolveBuild } from '../lib/builds.js';
+import { buildExecutionProvenance } from '../utils/executionProvenance.js';
 
 const RUN_RESULT_MAP = {
   pass: 1,
@@ -1010,7 +1011,7 @@ function findMatchingExecutedCase(casesAssigned, runRecord, hasConfig, configId)
   });
 }
 
-function buildUpdatePayload({ execCase, projectId, testPlanId, runRecord, configId, hasConfig }) {
+function buildUpdatePayload({ execCase, projectId, testPlanId, runRecord, configId, hasConfig, provenance }) {
   const payload = {
     id: execCase.id,
     test_plan_test_case: execCase.test_plan_test_case.id,
@@ -1018,6 +1019,13 @@ function buildUpdatePayload({ execCase, projectId, testPlanId, runRecord, config
     status: runRecord.status,
     test_plan: testPlanId
   };
+
+  // TCV-6814: say how this result was produced. The server re-derives the source from
+  // the credential used, so this only refines what the token already proves.
+  if (provenance) {
+    payload.execution_source = provenance.execution_source;
+    payload.execution_context = provenance.execution_context;
+  }
 
   if (hasConfig && configId && String(configId) !== '0') {
     payload.test_plan_config = Number(configId);
@@ -1046,7 +1054,8 @@ async function uploadUsingReporterFlow({
   hasConfig,
   resultsToUpload,
   unresolvedIds,
-  skipMissing = false
+  skipMissing = false,
+  buildId = null
 }) {
   const tcApiInstance = new TcApiClient({
     accessToken: apiKey,
@@ -1064,6 +1073,16 @@ async function uploadUsingReporterFlow({
   if (!projectData || !projectData.id) {
     throw new Error('Project could not be fetched. Ensure the project ID is correct and you have access.');
   }
+
+  // TCV-6814: computed once per upload rather than per case — it is identical for
+  // every result in the run.
+  const provenance = buildExecutionProvenance({ buildId });
+  console.log(
+    `ℹ️  Recording results as ${provenance.execution_source}` +
+      (provenance.execution_context.provider
+        ? ` (${provenance.execution_context.provider})`
+        : '')
+  );
 
   const testPlanData = await tcApiInstance.getTestplanInfo();
   if (!testPlanData || !testPlanData.id) {
@@ -1138,7 +1157,8 @@ async function uploadUsingReporterFlow({
           testPlanId,
           runRecord,
           configId,
-          hasConfig
+          hasConfig,
+          provenance
         });
 
         const updateResult = await tcApiInstance.updateCaseRunResult(execCase.id, updatePayload);
@@ -1655,7 +1675,9 @@ async function autoCreateTestPlan({ apiKey, apiUrl, projectId, parsedReport, bui
   const totalCases = allTests.filter(t => t.tcId).length;
   console.log(`   ✓ ${totalCases} test cases added and assigned to ${currentUser.firstName || currentUser.email}`);
 
-  return { testPlanId: newPlan.id };
+  // TCV-6814: the resolved build travels back so each result's provenance can name
+  // the exact version it was produced against.
+  return { testPlanId: newPlan.id, buildId: build && build.id ? build.id : null };
 }
 
 export async function report(options) {
@@ -1765,6 +1787,7 @@ export async function report(options) {
 
     // Auto-create mode: create all missing resources
     let effectiveTestPlanId = parsedTestPlanId;
+    let resolvedBuildId = null;
     if (autoCreate) {
       const autoResult = await autoCreateTestPlan({
         apiKey: String(apiKey),
@@ -1775,6 +1798,7 @@ export async function report(options) {
         environment
       });
       effectiveTestPlanId = autoResult.testPlanId;
+      resolvedBuildId = autoResult.buildId || null;
     }
 
     // Persist the resolved test plan id so a later CI step (e.g. `tc gate`) can
@@ -1801,7 +1825,8 @@ export async function report(options) {
       hasConfig: parsedReport.hasConfig,
       resultsToUpload: parsedReport.resultsToUpload,
       unresolvedIds: parsedReport.unresolvedIds,
-      skipMissing: Boolean(skipMissing)
+      skipMissing: Boolean(skipMissing),
+      buildId: resolvedBuildId
     });
 
     logUploadSummary(normalizedFormat === 'junit' ? 'JUnit' : 'Mochawesome', summary);
