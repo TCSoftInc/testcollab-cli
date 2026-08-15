@@ -61,7 +61,7 @@ program
   .option('--environment <name>', 'Environment it was deployed to')
   .option('--deployment-url <url>', 'Link to the pipeline run or deployment (default: from CI)')
   .option('--commit <sha>', 'Commit SHA the build was produced from (default: from CI)')
-  .option('--commit-url <url>', 'Link to the commit in your VCS (default: from CI, else resolved server-side)')
+  .option('--commit-url <url>', 'Link to the commit in your VCS (default: detected from the CI environment)')
   .option('--repo-url <url>', 'Link to the repository the build was produced from (default: from CI)')
   .option('--notes <text>', 'Free-text note about the build')
   .option('--api-url <url>', 'TestCollab API base URL', 'https://api.testcollab.io')
