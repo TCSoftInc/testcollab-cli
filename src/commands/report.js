@@ -25,6 +25,8 @@ import {
 } from 'testcollab-sdk';
 import { resolveBuild } from '../lib/builds.js';
 import { buildExecutionProvenance } from '../utils/executionProvenance.js';
+import { decodeXmlEntities } from '../lib/xml.js';
+import { extractAttachmentPaths, resolveAttachments } from '../lib/attachments.js';
 
 const RUN_RESULT_MAP = {
   pass: 1,
@@ -132,33 +134,6 @@ function getBaseApiUrl(apiUrl) {
     return 'https://api.testcollab-dev.io';
   }
   return 'http://localhost:1337';
-}
-
-function decodeXmlEntities(value) {
-  if (value === undefined || value === null) {
-    return '';
-  }
-
-  return String(value)
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'")
-    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => {
-      try {
-        return String.fromCodePoint(Number.parseInt(hex, 16));
-      } catch {
-        return '';
-      }
-    })
-    .replace(/&#([0-9]+);/g, (_, decimal) => {
-      try {
-        return String.fromCodePoint(Number.parseInt(decimal, 10));
-      } catch {
-        return '';
-      }
-    })
-    .replace(/&amp;/g, '&');
 }
 
 function parseXmlAttributes(input) {
@@ -612,7 +587,10 @@ export function parseJUnitXml(junitXmlContent) {
       duration,
       state,
       failureMessage: failureDetails.message,
-      failureStack: failureDetails.stack
+      failureStack: failureDetails.stack,
+      // TCV-6853: artefacts this test produced, named by [[ATTACHMENT|path]]
+      // lines in its <system-out>.
+      attachmentPaths: extractAttachmentPaths(body)
     };
   });
 
@@ -662,7 +640,8 @@ export function parseJUnitReport(junitXmlContent) {
       status: toRunStatus(testCase.state),
       errDetails: String(testCase.failureStack || testCase.failureMessage || '').trim() || null,
       title: `${testCase.suite} ${testCase.title}`.trim(),
-      duration: testCase.duration
+      duration: testCase.duration,
+      attachmentPaths: testCase.attachmentPaths
     });
   });
 
@@ -676,7 +655,8 @@ export function parseJUnitReport(junitXmlContent) {
     configId: tc.configId ? String(tc.configId) : '0',
     status: toRunStatus(tc.state),
     errDetails: String(tc.failureStack || tc.failureMessage || '').trim() || null,
-    duration: tc.duration
+    duration: tc.duration,
+    attachmentPaths: tc.attachmentPaths
   }));
 
   if (!Object.keys(resultsToUpload).length && !allTests.length) {
@@ -987,6 +967,62 @@ class TcApiClient {
       return null;
     }
   }
+
+  /**
+   * TCV-6853: upload one artefact file and return its id. The `company` field
+   * is what lets the file be linked afterwards — updateAttachments rejects
+   * files that were not registered against the project's company.
+   *
+   * Errors propagate so the caller can name the file in its warning.
+   */
+  async uploadAttachmentFile({ absPath, name, mimeType, companyId }) {
+    const form = new FormData();
+    form.append('files', new Blob([fs.readFileSync(absPath)], { type: mimeType }), name);
+    if (companyId) {
+      form.append('company', String(companyId));
+    }
+
+    const response = await fetch(this.buildUrl('/upload'), {
+      method: 'POST',
+      headers: { Accept: 'application/json' },
+      body: form
+    });
+
+    const rawBody = await response.text();
+    let data = null;
+    if (rawBody) {
+      try {
+        data = JSON.parse(rawBody);
+      } catch {
+        data = rawBody;
+      }
+    }
+
+    if (!response.ok) {
+      const message =
+        (data && typeof data === 'object' && (data.message || data.error)) ||
+        (typeof data === 'string' ? data : '') ||
+        `upload failed with status ${response.status}`;
+      throw new Error(typeof message === 'string' ? message : JSON.stringify(message));
+    }
+
+    const uploaded = Array.isArray(data) ? data[0] : data;
+    if (!uploaded || !uploaded.id) {
+      throw new Error('upload returned no file id');
+    }
+
+    return uploaded.id;
+  }
+
+  async linkAttachments(execCaseId, attachmentIds) {
+    return this.request(`/executedtestcases/${execCaseId}/updateAttachments`, {
+      method: 'PUT',
+      body: {
+        attachments: attachmentIds,
+        project: this.projectId
+      }
+    });
+  }
 }
 
 function findMatchingExecutedCase(casesAssigned, runRecord, hasConfig, configId) {
@@ -1046,6 +1082,51 @@ function buildUpdatePayload({ execCase, projectId, testPlanId, runRecord, config
   return payload;
 }
 
+/**
+ * TCV-6853: carry the artefacts a test produced into its execution, so a failed
+ * automated result gives a tester something to look at.
+ *
+ * Every failure here is a warning, never a throw: `tc report` runs immediately
+ * before `tc gate`, and a flaky attachment must not block a release. Returns
+ * how many files were attached.
+ */
+async function attachCaseArtefacts({ client, execCase, runRecord, companyId, baseDirs, uploadCache }) {
+  const { files, warnings } = resolveAttachments(runRecord.attachmentPaths, baseDirs);
+  warnings.forEach((warning) => console.warn(`⚠️  ${runRecord.title}: ${warning}`));
+
+  const attachmentIds = [];
+  for (const file of files) {
+    // The same artefact can be named by several tests (a shared run log); upload it once.
+    const uploadedId = uploadCache.get(file.absPath);
+    if (uploadedId) {
+      attachmentIds.push(uploadedId);
+      continue;
+    }
+
+    try {
+      const id = await client.uploadAttachmentFile({ ...file, companyId });
+      uploadCache.set(file.absPath, id);
+      attachmentIds.push(id);
+    } catch (error) {
+      console.warn(`⚠️  Could not upload attachment "${file.name}": ${error?.message || String(error)}`);
+    }
+  }
+
+  if (!attachmentIds.length) {
+    return 0;
+  }
+
+  try {
+    await client.linkAttachments(execCase.id, attachmentIds);
+    return attachmentIds.length;
+  } catch (error) {
+    console.warn(
+      `⚠️  Could not attach ${attachmentIds.length} file(s) to test case ${runRecord.tcId}: ${error?.message || String(error)}`
+    );
+    return 0;
+  }
+}
+
 async function uploadUsingReporterFlow({
   apiKey,
   projectId,
@@ -1055,7 +1136,8 @@ async function uploadUsingReporterFlow({
   resultsToUpload,
   unresolvedIds,
   skipMissing = false,
-  buildId = null
+  buildId = null,
+  attachmentBaseDirs = []
 }) {
   const tcApiInstance = new TcApiClient({
     accessToken: apiKey,
@@ -1120,6 +1202,15 @@ async function uploadUsingReporterFlow({
   let errors = 0;
   let skippedMissing = 0;
 
+  // TCV-6853: uploads are registered against the project's company — that is what
+  // the executed-case attachment endpoint validates them against.
+  const companyId = projectData.company && projectData.company.id
+    ? projectData.company.id
+    : projectData.company || null;
+  const uploadCache = new Map();
+  let attachmentsUploaded = 0;
+  let casesWithAttachments = 0;
+
   const configIds = Object.keys(resultsToUpload);
 
   for (const configId of configIds) {
@@ -1183,6 +1274,24 @@ async function uploadUsingReporterFlow({
             time_taken: updatePayload.time_taken,
             project: projectId
           });
+        }
+
+        // TCV-6853: outside the result update on purpose — an artefact that fails
+        // to upload must not look like a failed result, and must not fail the run.
+        if (runRecord.attachmentPaths && runRecord.attachmentPaths.length) {
+          const attached = await attachCaseArtefacts({
+            client: tcApiInstance,
+            execCase,
+            runRecord,
+            companyId,
+            baseDirs: attachmentBaseDirs,
+            uploadCache
+          });
+
+          if (attached) {
+            attachmentsUploaded += attached;
+            casesWithAttachments += 1;
+          }
         }
       } catch {
         errors += 1;
@@ -1251,6 +1360,8 @@ async function uploadUsingReporterFlow({
     updated,
     errors,
     skippedMissing,
+    attachmentsUploaded,
+    casesWithAttachments,
     unresolvedIds: unique(unresolvedIds || []),
     unmatchedCaseIds: unique([...unmatchedCaseIds]),
     unmatchedConfigIds: unique([...unmatchedConfigIds])
@@ -1295,6 +1406,11 @@ function logUploadSummary(formatLabel, summary) {
 
   if (summary.skippedMissing) {
     console.log(`⏭️  ${summary.skippedMissing} test case(s) not in result file marked as skipped`);
+  }
+  if (summary.attachmentsUploaded) {
+    console.log(
+      `📎 ${summary.attachmentsUploaded} attachment(s) uploaded to ${summary.casesWithAttachments} test case(s)`
+    );
   }
   if (summary.unresolvedIds?.length) {
     console.warn(`⚠️  ${summary.unresolvedIds.length} testcase(s) missing TestCollab ID`);
@@ -1574,7 +1690,8 @@ async function autoCreateTestPlan({ apiKey, apiUrl, projectId, parsedReport, bui
       status: test.status,
       errDetails: test.errDetails,
       title: test.title,
-      duration: test.duration
+      duration: test.duration,
+      attachmentPaths: test.attachmentPaths
     });
   }
   parsedReport.resultsToUpload = newResultsToUpload;
@@ -1826,7 +1943,11 @@ export async function report(options) {
       resultsToUpload: parsedReport.resultsToUpload,
       unresolvedIds: parsedReport.unresolvedIds,
       skipMissing: Boolean(skipMissing),
-      buildId: resolvedBuildId
+      buildId: resolvedBuildId,
+      // TCV-6853: an [[ATTACHMENT|...]] path is written by the test runner, so it
+      // is relative either to where the pipeline ran the tests or to where it
+      // wrote the report. Absolute paths ignore both.
+      attachmentBaseDirs: unique([process.cwd(), path.dirname(absResultPath)])
     });
 
     logUploadSummary(normalizedFormat === 'junit' ? 'JUnit' : 'Mochawesome', summary);

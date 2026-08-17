@@ -356,6 +356,29 @@ If your test plan uses multiple configurations, include the config ID in your te
 - **Mochawesome:** Use `config-id-<id>` as a top-level suite title
 - **JUnit:** Include `config-id-<id>` or `config-<id>` in the test case name or classname
 
+#### Test artefacts (screenshots, logs, traces)
+
+A failed automated result is only as useful as the evidence behind it. If a test names the files it produced, `tc report` uploads them and attaches them to that test case's execution — the same place a manual tester's screenshots go.
+
+Name each file on its own line in the test's `<system-out>`, using the marker the Jenkins JUnit Attachments plugin introduced (Azure DevOps reads the same one):
+
+```xml
+<testcase name="[TC-124] should reject invalid password" time="0.43">
+  <failure message="Expected 401 but got 200">AssertionError</failure>
+  <system-out>
+[[ATTACHMENT|test-results/login-failure.png]]
+[[ATTACHMENT|test-results/browser.log|{"name":"console output"}]]
+  </system-out>
+</testcase>
+```
+
+- **JUnit XML only**, and per test case — the files land on that case's execution.
+- The marker must be **alone on its line**, so a log line that merely mentions the syntax is not mistaken for one. The optional third part (`|{...}`) is accepted and ignored.
+- Paths may be **absolute**, or relative to the directory you run `tc report` from, or relative to the directory holding `--result-file`. All three are tried, which covers both the runners that write working-directory-relative paths (Playwright) and the JUnit convention of report-relative ones.
+- **Guardrails:** up to **10 files per test case**, each up to **10 MB**. Anything larger, missing, or rejected by the server is reported as a warning — `tc report` still exits **0**, so a flaky artefact never blocks the `tc gate` step that follows it.
+
+See the [Framework Setup Guide](docs/frameworks.md#attaching-test-artefacts) for how to emit the marker from your runner.
+
 #### Sample files
 
 See `samples/reports/` for example Mochawesome and JUnit files you can reference.

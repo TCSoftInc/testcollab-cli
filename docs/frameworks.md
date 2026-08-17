@@ -66,6 +66,38 @@ Your test names must include a TestCollab case ID (e.g., `[TC-123]`, `TC-123`, `
 
 The key requirement is that each test name contains a TestCollab case ID (e.g., `[TC-123]`). The CLI extracts this ID to match results to the correct test case in your test plan.
 
+### Attaching test artefacts
+
+Screenshots, logs and traces your tests produce can travel with the result, so a failed automated case gives a tester something to look at. Name each file on its own line inside the test's `<system-out>` (JUnit XML only):
+
+```xml
+<testcase classname="Authentication.Login" name="[TC-124] should reject invalid password" time="0.43">
+  <failure message="Expected 401 but got 200">AssertionError</failure>
+  <system-out>
+[[ATTACHMENT|test-results/login-failure.png]]
+[[ATTACHMENT|test-results/browser.log]]
+  </system-out>
+</testcase>
+```
+
+`tc report` uploads each file and attaches it to that test case's execution. Paths may be absolute, relative to where you run `tc report`, or relative to the `--result-file` directory. Up to 10 files per case, 10 MB each; anything else is warned about and skipped, and `tc report` still exits 0.
+
+**Playwright** writes these markers for you — its JUnit reporter emits an `[[ATTACHMENT|…]]` line for every screenshot, video and trace the test recorded, so no test code changes are needed.
+
+**Any other runner**: print the line to the test's standard output and make sure the JUnit reporter records stdout in `<system-out>`. For example, in JavaScript:
+
+```js
+console.log(`[[ATTACHMENT|${screenshotPath}]]`);
+```
+
+or in Python:
+
+```python
+print(f"[[ATTACHMENT|{screenshot_path}]]")
+```
+
+The convention comes from the Jenkins JUnit Attachments plugin and is also read by Azure DevOps, so the same markers work whether or not you report to TestCollab.
+
 All examples below assume you've set the `TESTCOLLAB_TOKEN` environment variable (or pass `--api-key` to each command). See [Authentication](../README.md#authentication).
 
 ---
