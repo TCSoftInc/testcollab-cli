@@ -342,6 +342,18 @@ Login should succeed testcase-123      ← testcase- prefix
 checkout-42                            ← whole name is a slug ending in the ID
 ```
 
+**Which number is the ID?** The one TestCollab shows for the test case — the `TC-…`
+number in the test case list, on the test case page, and in exports. Copy it as it is
+written there: a case shown as **TC-74002** is tagged `[TC-74002]`.
+
+The internal database id also still works, so pipelines written before this was
+supported keep running unchanged. If a result matches on one, `tc report` says so and
+names the `TC-` id to use instead.
+
+If none of the ids in a report match, `tc report` prints the ids it could not find
+alongside the ids the run does hold, and **exits non-zero** — a run that recorded
+nothing is a broken pipeline step, not a passing build.
+
 A marker always wins over the trailing-number form, so `[TC-1730] ... and UTF-8` matches case
 **1730**, not 8. The trailing-number form only applies when the *entire* name is a slug
 (`checkout-42`, `login-flow-123`); a name that merely ends in a hyphenated number, such as

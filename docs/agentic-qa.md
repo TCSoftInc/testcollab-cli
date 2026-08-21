@@ -125,13 +125,14 @@ A starting prompt to feed an agent that has access to a browser automation tool.
 > 3. Determine pass/fail based on whether the final state matches the last step's `expectedResult`.
 > 4. If you cannot perform a step (e.g. login fails before you can test admin access), mark the case as `skipped` with a reason.
 >
-> Write a JUnit XML file to `./agent-results.xml`. Each `<testcase>` must use `name="[TC-<id>] <title>"` so the test case ID is recoverable. Set `classname` to the `suite` field. Wrap failures in `<failure>` with a one-line message.
+> Write a JUnit XML file to `./agent-results.xml`. Each `<testcase>` must use `name="[TC-<id>] <title>"`, where `<id>` is the `id` field of that test case in the plan file, so the test case ID is recoverable. Set `classname` to the `suite` field. Wrap failures in `<failure>` with a one-line message.
 >
 > When done, print the file path. Do not run `tc report` — that is handled by the CI pipeline.
 
 A few things to call out in the prompt:
 
 - The `[TC-<id>]` format is **how `tc report` maps results back** — agents that drop the ID will create new test cases instead of updating existing ones.
+- Either id resolves: the `TC-` number a person reads in TestCollab, or the `id` field `tc getTestPlan` writes into the plan file (the internal one). Hand the agent the plan file and let it copy the `id` from there rather than inventing a number.
 - Tell the agent explicitly **what counts as pass vs. fail**. Agents will rationalize ambiguous outcomes if you don't define them.
 - Give the agent a clear environment (URL, credentials, what's seeded) so test cases don't depend on hidden setup.
 

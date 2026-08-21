@@ -46,7 +46,8 @@ tc-cli report --project 123 --format junit --result-file results.xml --auto-crea
 - **No test plan needed** — one is created automatically
 - Test cases already exist in TestCollab
 - Result file test names contain TC IDs (e.g., `[TC-42] should login`)
-- The command verifies each TC ID exists, tags it with "CI Imported", creates a plan, and uploads
+- The command verifies each TC ID exists **in this project**, tags it with "CI Imported", creates a plan, and uploads
+- A TC ID is the `TC-` number TestCollab shows for the case; the internal database id also resolves. An id that belongs to no case of this project is treated as unmatched, and the test falls through to title matching
 
 ### Mode 3: Full Auto (no IDs, no plan)
 

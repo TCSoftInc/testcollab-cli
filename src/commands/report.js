@@ -27,6 +27,7 @@ import { resolveBuild } from '../lib/builds.js';
 import { buildExecutionProvenance } from '../utils/executionProvenance.js';
 import { decodeXmlEntities } from '../lib/xml.js';
 import { extractAttachmentPaths, resolveAttachments } from '../lib/attachments.js';
+import { fetchCasesByMarker, fetchTestCaseNumbers, formatCaseLabel } from '../lib/testCaseIds.js';
 
 const RUN_RESULT_MAP = {
   pass: 1,
@@ -1025,26 +1026,56 @@ class TcApiClient {
   }
 }
 
-function findMatchingExecutedCase(casesAssigned, runRecord, hasConfig, configId) {
-  const targetCaseId = String(runRecord.tcId);
-  if (hasConfig && configId && String(configId) !== '0') {
-    const targetConfigId = String(configId);
-    return casesAssigned.find((assignedCase) => {
-      const assignedTestCaseId = assignedCase?.test_plan_test_case?.test_case;
-      const assignedConfigId = assignedCase?.test_plan_config?.id;
-      return (
-        assignedTestCaseId !== undefined &&
-        String(assignedTestCaseId) === targetCaseId &&
-        assignedConfigId !== undefined &&
-        String(assignedConfigId) === targetConfigId
-      );
-    });
+function findAssignedCase(casesAssigned, targetCaseId, targetConfigId) {
+  return (Array.isArray(casesAssigned) ? casesAssigned : []).find((assignedCase) => {
+    const assignedTestCaseId = assignedCase?.test_plan_test_case?.test_case;
+    if (assignedTestCaseId === undefined || String(assignedTestCaseId) !== targetCaseId) {
+      return false;
+    }
+    if (!targetConfigId) {
+      return true;
+    }
+    const assignedConfigId = assignedCase?.test_plan_config?.id;
+    return assignedConfigId !== undefined && String(assignedConfigId) === targetConfigId;
+  });
+}
+
+/**
+ * TCV-6866: find the execution a result belongs to.
+ *
+ * The marker in a test name is read as the business id first — that is the
+ * number the product shows, so it is the one a user copies into a test name —
+ * and as the internal test case id second, which is what this used to compare
+ * against and what existing pipelines still send.
+ *
+ * @returns {{execCase: object|undefined, matchedBy: 'display_number'|'internal_id'|null, ambiguousWith: object|null}}
+ */
+export function resolveExecutedCase(casesAssigned, runRecord, hasConfig, configId, caseIdByDisplayNumber = null) {
+  const marker = String(runRecord.tcId);
+  const targetConfigId = hasConfig && configId && String(configId) !== '0' ? String(configId) : null;
+
+  const caseIdFromDisplayNumber = caseIdByDisplayNumber ? caseIdByDisplayNumber.get(marker) : undefined;
+  const byDisplayNumber = caseIdFromDisplayNumber
+    ? findAssignedCase(casesAssigned, String(caseIdFromDisplayNumber), targetConfigId)
+    : undefined;
+  const byInternalId = findAssignedCase(casesAssigned, marker, targetConfigId);
+
+  if (byDisplayNumber && byDisplayNumber.id) {
+    return {
+      execCase: byDisplayNumber,
+      matchedBy: 'display_number',
+      // The same number can be one case's business id and another's internal id.
+      // Recording against the wrong one silently is the failure this ticket is
+      // about, so the caller says which case won.
+      ambiguousWith: byInternalId && byInternalId.id !== byDisplayNumber.id ? byInternalId : null
+    };
   }
 
-  return casesAssigned.find((assignedCase) => {
-    const assignedTestCaseId = assignedCase?.test_plan_test_case?.test_case;
-    return assignedTestCaseId !== undefined && String(assignedTestCaseId) === targetCaseId;
-  });
+  return {
+    execCase: byInternalId,
+    matchedBy: byInternalId && byInternalId.id ? 'internal_id' : null,
+    ambiguousWith: null
+  };
 }
 
 function buildUpdatePayload({ execCase, projectId, testPlanId, runRecord, configId, hasConfig, provenance }) {
@@ -1137,7 +1168,12 @@ async function uploadUsingReporterFlow({
   unresolvedIds,
   skipMissing = false,
   buildId = null,
-  attachmentBaseDirs = []
+  attachmentBaseDirs = [],
+  // TCV-6866: --auto-create has already resolved every marker against the
+  // project, so its ids are internal ids. Reading them as business ids a second
+  // time could hand the result to a different case that happens to be shown
+  // under that number.
+  markersAreCaseIds = false
 }) {
   const tcApiInstance = new TcApiClient({
     accessToken: apiKey,
@@ -1194,10 +1230,27 @@ async function uploadUsingReporterFlow({
   const casesAssigned = await tcApiInstance.getAssignedCases();
   console.log({ 'Total assigned cases found': Array.isArray(casesAssigned) ? casesAssigned.length : 0 });
 
+  // TCV-6866: the executed-case payload only carries internal test case ids, so
+  // the business ids (TC-<n>) of this run's cases are read once here. Scoping the
+  // lookup to the run keeps a marker from ever resolving to a case outside it.
+  const assignedCaseIds = unique(
+    (Array.isArray(casesAssigned) ? casesAssigned : []).map(
+      (assignedCase) => assignedCase?.test_plan_test_case?.test_case
+    )
+  );
+  const { displayNumberByCaseId, caseIdByDisplayNumber } = await fetchTestCaseNumbers(
+    getBaseApiUrl(apiUrl),
+    apiKey,
+    projectId,
+    assignedCaseIds
+  );
+
   const unmatchedCaseIds = new Set();
   const unmatchedConfigIds = new Set();
   const matchedExecCaseIds = new Set();
+  let attempted = 0;
   let matched = 0;
+  let matchedByInternalId = 0;
   let updated = 0;
   let errors = 0;
   let skippedMissing = 0;
@@ -1229,7 +1282,15 @@ async function uploadUsingReporterFlow({
           continue;
         }
 
-        const execCase = findMatchingExecutedCase(casesAssigned, runRecord, hasConfig, configId);
+        attempted += 1;
+
+        const { execCase, matchedBy, ambiguousWith } = resolveExecutedCase(
+          casesAssigned,
+          runRecord,
+          hasConfig,
+          configId,
+          markersAreCaseIds ? null : caseIdByDisplayNumber
+        );
         if (!execCase || !execCase.id) {
           if (hasConfig && String(configId) !== '0') {
             unmatchedConfigIds.add(`${runRecord.tcId}:${configId}`);
@@ -1237,6 +1298,25 @@ async function uploadUsingReporterFlow({
             unmatchedCaseIds.add(String(runRecord.tcId));
           }
           continue;
+        }
+
+        if (ambiguousWith) {
+          console.warn(
+            `⚠️  ${runRecord.tcId} is both a TestCollab id (TC-${runRecord.tcId}) and the internal id of ` +
+              `another case in this run. Recorded against ${formatCaseLabel(
+                execCase.test_plan_test_case.test_case,
+                displayNumberByCaseId
+              )}, not internal id ${ambiguousWith.test_plan_test_case.test_case}.`
+          );
+        }
+        if (
+          matchedBy === 'internal_id' &&
+          !markersAreCaseIds &&
+          displayNumberByCaseId.has(String(execCase.test_plan_test_case.test_case))
+        ) {
+          // Counted rather than warned per case: a pipeline written before
+          // business ids existed would otherwise print one line per test.
+          matchedByInternalId += 1;
         }
 
         matched += 1;
@@ -1356,7 +1436,9 @@ async function uploadUsingReporterFlow({
   }
 
   return {
+    attempted,
     matched,
+    matchedByInternalId,
     updated,
     errors,
     skippedMissing,
@@ -1364,7 +1446,10 @@ async function uploadUsingReporterFlow({
     casesWithAttachments,
     unresolvedIds: unique(unresolvedIds || []),
     unmatchedCaseIds: unique([...unmatchedCaseIds]),
-    unmatchedConfigIds: unique([...unmatchedConfigIds])
+    unmatchedConfigIds: unique([...unmatchedConfigIds]),
+    // TCV-6866: what the run actually offered, so a log shows the mismatch
+    // between the ids a test named and the ids that were there to be matched.
+    availableCaseLabels: assignedCaseIds.map((caseId) => formatCaseLabel(caseId, displayNumberByCaseId))
   };
 }
 
@@ -1401,6 +1486,21 @@ function validateRequiredOptions({ apiKey, project, testPlanId }) {
   };
 }
 
+/**
+ * TCV-6866: a readable id list for a log line. Long runs are cut short, and the
+ * line says how many were left out so it never reads as the complete set.
+ */
+export function formatIdList(labels, limit = 20) {
+  const list = Array.isArray(labels) ? labels : [];
+  if (!list.length) {
+    return 'none';
+  }
+  if (list.length <= limit) {
+    return list.join(', ');
+  }
+  return `${list.slice(0, limit).join(', ')} … and ${list.length - limit} more`;
+}
+
 function logUploadSummary(formatLabel, summary) {
   console.log(`✅ ${formatLabel} report processed (${summary.matched || 0} matched, ${summary.updated || 0} updated)`);
 
@@ -1412,14 +1512,31 @@ function logUploadSummary(formatLabel, summary) {
       `📎 ${summary.attachmentsUploaded} attachment(s) uploaded to ${summary.casesWithAttachments} test case(s)`
     );
   }
+  if (summary.matchedByInternalId) {
+    console.log(
+      `ℹ️  ${summary.matchedByInternalId} result(s) matched on an internal test case id. ` +
+        'TestCollab shows TC- ids; tagging tests with those keeps the marker readable in the app.'
+    );
+  }
   if (summary.unresolvedIds?.length) {
     console.warn(`⚠️  ${summary.unresolvedIds.length} testcase(s) missing TestCollab ID`);
   }
   if (summary.unmatchedCaseIds?.length) {
-    console.warn(`⚠️  ${summary.unmatchedCaseIds.length} testcase ID(s) not found in assigned executed cases`);
+    // TCV-6866: naming both sides is the whole point — the ids a test asked for
+    // next to the ids the run holds is what makes a wrong-number marker obvious.
+    console.warn(
+      `⚠️  ${summary.unmatchedCaseIds.length} testcase ID(s) not found in assigned executed cases: ` +
+        `${summary.unmatchedCaseIds.join(', ')}`
+    );
+    console.warn(`   Assigned in this run: ${formatIdList(summary.availableCaseLabels)}`);
+    console.warn('   Tag each test with the id TestCollab shows for it, e.g. [TC-1234].');
   }
   if (summary.unmatchedConfigIds?.length) {
-    console.warn(`⚠️  ${summary.unmatchedConfigIds.length} testcase/config pair(s) could not be matched`);
+    console.warn(
+      `⚠️  ${summary.unmatchedConfigIds.length} testcase/config pair(s) could not be matched: ` +
+        `${summary.unmatchedConfigIds.join(', ')}`
+    );
+    console.warn(`   Assigned in this run: ${formatIdList(summary.availableCaseLabels)}`);
   }
   if (summary.errors) {
     console.warn(`⚠️  ${summary.errors} testcase update(s) failed while processing report`);
@@ -1604,31 +1721,43 @@ async function autoCreateTestPlan({ apiKey, apiUrl, projectId, parsedReport, bui
   let matchedByTitleCount = 0;
   let createdCount = 0;
 
+  // TCV-6866: a marker names the id the product shows (display_number), so the
+  // markers are resolved against that first and against the internal id second.
+  // Replaces a per-test getTestCase() call, which was not project-scoped — and
+  // could not have been, since the SDK's TestCase model drops `project`.
+  const casesByMarker = await fetchCasesByMarker(
+    effectiveApiUrl,
+    apiKey,
+    projectId,
+    allTests.map((t) => t.tcId)
+  );
+
   for (const test of allTests) {
     const targetSuite = resolveSuiteForTest(test);
 
     if (test.tcId) {
-      // Has TC ID — verify it exists and ensure tag
-      try {
-        const existingCase = await testCasesApi.getTestCase({ id: Number(test.tcId) });
-        if (existingCase && existingCase.id) {
-          const existingTagIds = (existingCase.tags || []).map(t => typeof t === 'object' ? t.id : t);
-          if (!existingTagIds.includes(ciTag.id)) {
-            await testCasesApi.updateTestCase({
-              id: existingCase.id,
-              testCasePayload: {
-                title: existingCase.title,
-                project: projectId,
-                suite: existingCase.suite?.id || existingCase.suite || targetSuite.id,
-                tags: [...existingTagIds, ciTag.id],
-                customFields: []
-              }
-            });
-          }
-          matchedByIdCount++;
+      // Has TC ID — verify it exists in this project and ensure tag
+      const existingCase = casesByMarker.get(String(test.tcId));
+      if (existingCase && existingCase.id) {
+        const existingTagIds = (existingCase.tags || []).map(t => typeof t === 'object' ? t.id : t);
+        if (!existingTagIds.includes(ciTag.id)) {
+          await testCasesApi.updateTestCase({
+            id: existingCase.id,
+            testCasePayload: {
+              title: existingCase.title,
+              project: projectId,
+              suite: existingCase.suite?.id || existingCase.suite || targetSuite.id,
+              tags: [...existingTagIds, ciTag.id],
+              customFields: []
+            }
+          });
         }
-      } catch {
-        // Test case with this ID doesn't exist — treat as unresolved
+        // The rest of the run works in internal ids, so the marker is replaced
+        // by the id of the case it named.
+        test.tcId = String(existingCase.id);
+        matchedByIdCount++;
+      } else {
+        // No test case of this project carries this id — treat as unresolved
         test.tcId = null;
       }
     }
@@ -1947,10 +2076,22 @@ export async function report(options) {
       // TCV-6853: an [[ATTACHMENT|...]] path is written by the test runner, so it
       // is relative either to where the pipeline ran the tests or to where it
       // wrote the report. Absolute paths ignore both.
-      attachmentBaseDirs: unique([process.cwd(), path.dirname(absResultPath)])
+      attachmentBaseDirs: unique([process.cwd(), path.dirname(absResultPath)]),
+      markersAreCaseIds: Boolean(autoCreate)
     });
 
     logUploadSummary(normalizedFormat === 'junit' ? 'JUnit' : 'Mochawesome', summary);
+
+    // TCV-6866: a run that recorded nothing at all is a broken pipeline step, not
+    // a green build. This used to exit 0, so a report whose markers matched no
+    // case passed silently and the gap only showed up in the test plan days later.
+    if (summary.attempted > 0 && summary.updated === 0) {
+      console.error(
+        `❌ Error: none of the ${summary.attempted} result(s) in the report were recorded in TestCollab.`
+      );
+      console.error('   Check that the ids in your test names are the ids TestCollab shows for the cases in this run.');
+      process.exit(1);
+    }
   } catch (err) {
     // TCV-6489: The SDK throws raw Response objects on non-2xx status codes,
     // which stringify as "[object Response]". Extract the actual error details.

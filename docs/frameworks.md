@@ -6,7 +6,7 @@ How to generate test result files compatible with `tc report` for each supported
 - **Mochawesome JSON** (`--format mochawesome`)
 - **JUnit XML** (`--format junit`)
 
-Your test names must include a TestCollab case ID (e.g., `[TC-123]`, `TC-123`, `id-123`, or `testcase-123`) so results can be matched to test cases. See the [README](../README.md#mapping-test-cases) for all supported patterns.
+Your test names must include a TestCollab case ID (e.g., `[TC-123]`, `TC-123`, `id-123`, or `testcase-123`) so results can be matched to test cases. Use the `TC-` number TestCollab shows for the case — the one in the test case list and on the test case page — exactly as it is written there. See the [README](../README.md#mapping-test-cases) for all supported patterns.
 
 ### Supported frameworks
 
@@ -64,7 +64,7 @@ Your test names must include a TestCollab case ID (e.g., `[TC-123]`, `TC-123`, `
 }
 ```
 
-The key requirement is that each test name contains a TestCollab case ID (e.g., `[TC-123]`). The CLI extracts this ID to match results to the correct test case in your test plan.
+The key requirement is that each test name contains a TestCollab case ID (e.g., `[TC-123]`) — the `TC-` number shown against that case in TestCollab. The CLI extracts this ID to match results to the correct test case in your test plan. The internal database id of a case also still resolves, so older pipelines keep working.
 
 ### Attaching test artefacts
 

@@ -105,7 +105,7 @@ Hermes uses accessibility trees (text-based page structure with reference IDs) r
 
 ## Result mapping
 
-Results are mapped back to TestCollab test cases using the `[TC-ID]` convention in JUnit output:
+Results are mapped back to TestCollab test cases using the `[TC-ID]` convention in JUnit output. Either id resolves: the `TC-` number TestCollab shows for the case, or the `id` field Hermes reads out of the plan file:
 
 ```xml
 <testcase classname="Login" name="[TC-42] User can log in with valid credentials"/>
