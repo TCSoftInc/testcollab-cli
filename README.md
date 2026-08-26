@@ -127,6 +127,7 @@ tc createTestPlan \
   --assignee-id <id> \
   [--build <idOrVersion>] \
   [--release <id>] \
+  [--override-assignees] \
   [--api-key <key>] \
   [--api-url <url>]
 ```
@@ -138,10 +139,28 @@ tc createTestPlan \
 | `--assignee-id <id>` | Yes | User ID to assign the plan execution to |
 | `--build <idOrVersion>` | No | Build the plan is executed against — a build ID or a version string (e.g. `2026.8.6-rc1`). Results are then traceable to that build. |
 | `--release <id>` | No | Release ID the plan belongs to |
+| `--override-assignees` | No | Assign **every** test case to `--assignee-id`, replacing the default assignees the test cases carry. Off by default. |
 | `--api-key <key>` | No | TestCollab API key (or set `TESTCOLLAB_TOKEN` env var) |
 | `--api-url <url>` | No | API base URL (default: `https://api.testcollab.io`). Use `https://api-eu.testcollab.io` for EU region. |
 
 **Output:** Writes the created plan ID to `tmp/tc_test_plan` as `TESTCOLLAB_TEST_PLAN_ID=<id>`. You can source this file in subsequent CI steps.
+
+#### Who the test cases are assigned to
+
+A test case in TestCollab can carry a **default assignee** — the person who normally executes it. When the command adds the tagged cases to the new plan, each case brings its default assignee with it.
+
+```bash
+# default: the test cases keep their own default assignee,
+# and user 7 gets only the cases that have none
+tc createTestPlan --project 45 --ci-tag-id 12 --assignee-id 7
+
+# override: every case in the plan goes to user 7
+tc createTestPlan --project 45 --ci-tag-id 12 --assignee-id 7 --override-assignees
+```
+
+- Without the flag the command matches the app, where the assignment rules only fill in what is still unassigned.
+- With the flag it matches the app's "Apply assignment rules to all test cases" checkbox.
+- If every case already carries a default assignee and the flag is off, nothing is reassigned. The command says so in its output.
 
 #### Tying the plan to the version it tests
 

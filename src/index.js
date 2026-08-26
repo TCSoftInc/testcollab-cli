@@ -46,6 +46,9 @@ program
   .requiredOption('--assignee-id <id>', 'User ID to assign execution')
   .option('--build <idOrVersion>', 'Build ID or version string the plan is executed against')
   .option('--release <id>', 'Release ID the plan belongs to')
+  // TCV-6891: off by default, which keeps the default assignee each test case
+  // carries (TCV-6779) and gives --assignee-id only the cases without one.
+  .option('--override-assignees', 'Assign every test case to --assignee-id, replacing the default assignees inherited from the test cases', false)
   .option('--api-url <url>', 'TestCollab API base URL', 'https://api.testcollab.io')
   .action(createTestPlan);
 
