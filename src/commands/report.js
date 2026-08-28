@@ -678,7 +678,7 @@ export function parseJUnitReport(junitXmlContent) {
   };
 }
 
-function encodeComment(value) {
+export function encodeComment(value) {
   const text = String(value || '').trim();
   if (!text) {
     return '';
@@ -691,7 +691,7 @@ function encodeComment(value) {
   }
 }
 
-class TcApiClient {
+export class TcApiClient {
   constructor({ accessToken, projectId, testPlanId, baseApiUrl }) {
     this.accessToken = String(accessToken);
     this.projectId = Number(projectId);

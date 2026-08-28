@@ -9,7 +9,8 @@ Hand-written E2E suites are expensive to maintain. Manual QA is slow. Agents can
 The CLI gives you both:
 
 - [`tc getTestPlan`](../README.md#tc-gettestplan) — agent reads a curated plan as JSON
-- [`tc report`](../README.md#tc-report) — agent uploads results back
+- [`tc reportCase`](../README.md#tc-reportcase) — agent reports each result immediately
+- [`tc report`](../README.md#tc-report) — bulk import fallback for completed result files
 
 Humans stay in control of *what* to test (in TestCollab's UI). Agents handle *executing* it.
 
@@ -32,7 +33,7 @@ Humans stay in control of *what* to test (in TestCollab's UI). Agents handle *ex
               │
               ▼
    ┌─────────────────────┐
-   │ tc report           │  → results visible in TestCollab
+   │ tc reportCase       │  → each result visible immediately in TestCollab
    └─────────────────────┘
 ```
 
@@ -44,7 +45,8 @@ Every step is scriptable, so the whole loop can run in CI on a schedule, on ever
 |---------|------------------|
 | [`tc createTestPlan`](../README.md#tc-createtestplan) | Pre-create a plan in CI from a CI tag — useful when you want the agent to execute a fresh plan per build |
 | [`tc getTestPlan`](../README.md#tc-gettestplan) | **The agent's input.** Returns the plan as agent-friendly JSON with stripped HTML, mapped statuses, and per-configuration breakdowns |
-| [`tc report`](../README.md#tc-report) | **The agent's output.** Upload pass/fail/skip results as a JUnit or Mochawesome file |
+| [`tc reportCase`](../README.md#tc-reportcase) | **The agent's live output.** Report one exact execution, its evidence, and duration as soon as it finishes |
+| [`tc report`](../README.md#tc-report) | Bulk-import a completed JUnit or Mochawesome file |
 | [`tc sync`](../README.md#tc-sync) | Keep TestCollab in sync with `.feature` files committed in Git — close the loop if you maintain test cases as code |
 
 ## End-to-end example
@@ -63,6 +65,7 @@ export TESTCOLLAB_TOKEN=$TC_TOKEN
 tc getTestPlan \
   --project 16 \
   --test-plan-id 555 \
+  --test-plan-run-id 88 \
   --output /tmp/plan.json
 ```
 
@@ -87,51 +90,47 @@ This produces JSON like:
 }
 ```
 
-### 3. Have the agent execute the plan
+The output's `executions` array contains the exact execution ids assigned to the
+authenticated Agent in run `88`, and `statuses` lists the active system and
+custom status names it may report.
 
-Feed `/tmp/plan.json` to an agent with browser automation. The agent walks each test case, performs the steps, and writes a JUnit XML result file. A simple result file might look like:
+### 3. Have the agent execute and report the plan
 
-```xml
-<testsuite name="Nightly Regression">
-  <testcase classname="Permissions" name="[TC-42] Regular user cannot access admin settings"/>
-  <testcase classname="Permissions" name="[TC-43] Admin can edit user roles">
-    <failure>Expected redirect to /admin but got 500</failure>
-  </testcase>
-</testsuite>
-```
-
-The `[TC-<id>]` prefix is what lets `tc report` map results back to the right test case.
-
-### 4. Upload results
+Feed `/tmp/plan.json` to an agent with browser automation. After it finishes one
+entry from `executions`, have it report that entry before moving on:
 
 ```bash
-tc report \
+tc reportCase \
   --project 16 \
-  --test-plan-id 555 \
-  --format junit \
-  --result-file ./agent-results.xml
+  --test-plan-run-id 88 \
+  --executed-test-case-id 17922 \
+  --status failed \
+  --comment "Expected redirect to /admin but got 500" \
+  --attachment /tmp/screenshots/admin-500.png
 ```
 
-Results now appear in TestCollab under the same plan, with each case marked passed/failed/skipped.
+The result appears in TestCollab immediately. If the Agent crashes on a later
+case, this result stays durable. `tc report` is still useful when a framework
+already emits one completed result file, but it is not needed for this loop.
 
 ## Sample agent prompt
 
 A starting prompt to feed an agent that has access to a browser automation tool. Adapt to your stack.
 
-> You are a QA agent. Read the test plan at `/tmp/plan.json`. For each test case in `testCases`:
+> You are a QA agent. Read the test plan at `/tmp/plan.json`. For each entry in `executions`:
 >
 > 1. Use the browser tool to perform the steps in order, starting from `https://staging.example.com`.
 > 2. For each step, the `expectedResult` is what should be observable after the step is performed.
 > 3. Determine pass/fail based on whether the final state matches the last step's `expectedResult`.
 > 4. If you cannot perform a step (e.g. login fails before you can test admin access), mark the case as `skipped` with a reason.
 >
-> Write a JUnit XML file to `./agent-results.xml`. Each `<testcase>` must use `name="[TC-<id>] <title>"` so the test case ID is recoverable. Set `classname` to the `suite` field. Wrap failures in `<failure>` with a one-line message.
->
-> When done, print the file path. Do not run `tc report` — that is handled by the CI pipeline.
+> Immediately run `tc reportCase` with that entry's exact `id`, the plan run id,
+> and an active status `systemName`. Include comments, time, and evidence files
+> from this execution. If reporting fails, stop and exit non-zero.
 
 A few things to call out in the prompt:
 
-- The `[TC-<id>]` format is **how `tc report` maps results back** — agents that drop the ID will create new test cases instead of updating existing ones.
+- The `executions[].id` value is the executed-test-case id. Do not substitute the test case id or test-plan-test-case id.
 - Tell the agent explicitly **what counts as pass vs. fail**. Agents will rationalize ambiguous outcomes if you don't define them.
 - Give the agent a clear environment (URL, credentials, what's seeded) so test cases don't depend on hidden setup.
 
@@ -155,7 +154,7 @@ To run the same test against each configuration:
 
 - Loop the agent over `configResults` per test case
 - Set up the matching environment (launch the right browser, switch the plan, etc.)
-- In the result file, use the `config-id-<configId>` convention in the test name or classname — `tc report` will route results to the correct configuration slot. See [the README](../README.md#configuration-specific-runs) for the exact format per result type.
+- Report each configuration's own `executions[].id`; no title convention is needed for `tc reportCase`.
 
 ## Keeping BDD specs in sync
 
@@ -184,5 +183,6 @@ This makes the agentic loop fully Git-driven: edits to `.feature` files flow to 
 ## Related
 
 - [`tc getTestPlan` reference](../README.md#tc-gettestplan)
+- [`tc reportCase` reference](../README.md#tc-reportcase)
 - [`tc report` reference](../README.md#tc-report)
 - [Framework setup for `tc report`](frameworks.md)
