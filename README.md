@@ -42,6 +42,7 @@ tc sync --project 123
 | [`tc createBuild`](#tc-createbuild) | Record the build your pipeline just produced or deployed |
 | [`tc createTestPlan`](#tc-createtestplan) | Create a test plan and assign tagged cases |
 | [`tc getTestPlan`](#tc-gettestplan) | Fetch a test plan as JSON for agent-driven execution |
+| [`tc reportCase`](#tc-reportcase) | Report one assigned execution immediately |
 | [`tc report`](#tc-report) | Upload Mochawesome or JUnit results (with `--auto-create` or to an existing plan) |
 | [`tc gate`](#tc-gate) | Fail the CI build unless a Test Plan's results meet the quality gate |
 | [`tc sync`](#tc-sync) | Sync `.feature` files from Git to TestCollab (designed for CI/CD, works locally too) |
@@ -167,6 +168,7 @@ Fetches a test plan and its test cases as structured JSON, designed to be consum
 tc getTestPlan \
   --project <id> \
   --test-plan-id <id> \
+  [--test-plan-run-id <id>] \
   [--api-key <key>] \
   [--api-url <url>] \
   [--output <path>]
@@ -176,6 +178,7 @@ tc getTestPlan \
 |--------|----------|-------------|
 | `--project <id>` | Yes | Project ID |
 | `--test-plan-id <id>` | Yes | Test plan ID to fetch |
+| `--test-plan-run-id <id>` | No | Include exact execution rows assigned to the authenticated caller in this run |
 | `--api-key <key>` | No | TestCollab API key (or set `TESTCOLLAB_TOKEN` env var) |
 | `--api-url <url>` | No | API base URL (default: `https://api.testcollab.io`). Use `https://api-eu.testcollab.io` for EU region. |
 | `--output <path>` | No | Write JSON to file instead of stdout |
@@ -210,6 +213,11 @@ tc getTestPlan \
 }
 ```
 
+The output also includes the project's active `statuses`, with the `systemName`
+that result commands accept. When `--test-plan-run-id` is supplied, it includes
+an `executions` array with the exact `id`, test case, configuration, assignee,
+and current status for every execution assigned to the caller in that run.
+
 If the plan has configurations (e.g. Browser × OS matrix), each test case also includes a `configResults` array with per-configuration status.
 
 **Piping:** progress messages go to stderr so stdout stays clean.
@@ -222,7 +230,43 @@ tc getTestPlan --project 16 --test-plan-id 555 2>/dev/null | jq '.testCases | le
 tc getTestPlan --project 16 --test-plan-id 555 --output /tmp/plan.json
 ```
 
-For the full agent-driven QA workflow that combines this with `tc report`, see the [Agentic QA Guide](docs/agentic-qa.md).
+For the full agent-driven QA workflow that combines this with `tc reportCase`, see the [Agentic QA Guide](docs/agentic-qa.md).
+
+---
+
+### `tc reportCase`
+
+Reports one assigned execution as soon as it finishes. It uses the same
+Executed Test Case update as TestCollab's Run screen; the API token determines
+the reporter, so there is no reporter-id option.
+
+```bash
+tc reportCase \
+  --project 16 \
+  --test-plan-run-id 88 \
+  --executed-test-case-id 17922 \
+  --status passed \
+  --time-taken 42 \
+  --attachment ./screenshots/checkout.png
+```
+
+| Option | Required | Description |
+|--------|----------|-------------|
+| `--project <id>` | Yes | Project ID |
+| `--test-plan-run-id <id>` | Yes | Exact Test Plan run/regression ID |
+| `--executed-test-case-id <id>` | Yes | Exact execution ID returned by `tc getTestPlan --test-plan-run-id` |
+| `--status <system-name>` | Yes | Active system or custom status `systemName` |
+| `--comment <text>` | No | Execution comment |
+| `--time-taken <seconds>` | No | Seconds spent on this execution |
+| `--step-results-file <path>` | No | JSON array of step-wise result records |
+| `--attachment <path>` | No | File to attach; repeat the option for multiple files |
+| `--api-key <key>` | No | TestCollab API key (or set `TESTCOLLAB_TOKEN`) |
+| `--api-url <url>` | No | API base URL override |
+
+The command verifies that the execution belongs to the requested run before it
+writes anything. With an Agent run token, the backend also enforces the run,
+plan, project, and assignee scope. A failed status, time, or attachment write
+exits non-zero.
 
 ---
 
