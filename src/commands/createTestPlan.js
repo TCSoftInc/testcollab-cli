@@ -11,13 +11,14 @@
  * - --assignee-id    User ID to assign the plan
  * - --build          Build id or version string the plan is executed against (TCV-6788)
  * - --release        Release ID the plan belongs to (TCV-6788)
+ * - --override-assignees  Give --assignee-id every test case, replacing the
+ *                    default assignees inherited from the test cases (TCV-6891)
  * - --api-url        (defaults to https://api.testcollab.io)
  */
 
 import fs from 'fs';
 import {
   TestPlanTestCasesApi,
-  TestPlansAssignmentApi,
   Configuration,
   ProjectsApi,
   UsersApi,
@@ -166,7 +167,8 @@ export async function createTestPlan(options) {
     assigneeId,
     apiUrl,
     build,
-    release
+    release,
+    overrideAssignees
   } = options;
 
   // Resolve API key: --api-key flag takes precedence, then TESTCOLLAB_TOKEN env var
@@ -242,7 +244,6 @@ export async function createTestPlan(options) {
   const tcApi = new TestCasesApi(config);
   const projectUsersApi = new ProjectUsersApi(config);
   const testPlanCases = new TestPlanTestCasesApi(config);
-  const testPlanAssignment = new TestPlansAssignmentApi(config);
 
   // Ensure tmp directory exists and remove old id file if present
   try {
@@ -385,25 +386,45 @@ export async function createTestPlan(options) {
       process.exit(1);
     }
 
-    console.log('Step 3: Assigning the test plan to a user...');
-    const assignmentResponse = await testPlanAssignment.assignTestPlan({
-      project: parsedProjectId,
-      testplan: testPlanId,
-      testPlanAssignmentPayload: {
-        executor: 'team',
-        assignmentCriteria: 'testCase',
-        assignmentMethod: 'automatic',
-        assignment: {
-          user: [parsedAssigneeId],
-          testCases: { testCases: [], selector: [] },
-          configuration: null
-        },
-        project: parsedProjectId,
-        testplan: testPlanId
+    // TCV-6891: a test case can carry a default assignee (TCV-6779), which step 2
+    // copies onto the plan. The pipeline decides whether --assignee-id replaces
+    // those or only covers the cases that have none. This goes through
+    // apiRequest instead of the SDK because the published SDK's
+    // TestPlanAssignmentPayload serializer drops keys it does not know, so
+    // `override_existing_assignees` would never reach the API.
+    console.log(
+      overrideAssignees === true
+        ? `Step 3: Assigning every test case to user ${parsedAssigneeId} (default assignees overridden)...`
+        : `Step 3: Assigning unassigned test cases to user ${parsedAssigneeId} (default assignees kept)...`
+    );
+    const assignmentResponse = await apiRequest(
+      effectiveApiUrl,
+      apiKey,
+      `/testplans/assign?testplan=${testPlanId}&project=${parsedProjectId}`,
+      {
+        method: 'POST',
+        body: {
+          executor: 'team',
+          assignment_criteria: 'testCase',
+          assignment_method: 'automatic',
+          assignment: {
+            user: [parsedAssigneeId],
+            testCases: { testCases: [], selector: [] },
+            configuration: null
+          },
+          project: parsedProjectId,
+          testplan: testPlanId,
+          override_existing_assignees: overrideAssignees === true
+        }
       }
-    });
+    );
 
-    console.log(assignmentResponse);
+    if (assignmentResponse && assignmentResponse.assignments_preserved) {
+      console.log(
+        '   Every test case already had an assignee, so nothing was reassigned. ' +
+          'Pass --override-assignees to give them all to --assignee-id.'
+      );
+    }
 
     // Persist test plan id
     fs.writeFileSync('tmp/tc_test_plan', `TESTCOLLAB_TEST_PLAN_ID=${testPlanId}`);
