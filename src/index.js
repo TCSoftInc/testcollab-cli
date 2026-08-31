@@ -14,6 +14,7 @@ import { createBuild } from './commands/createBuild.js';
 import { report } from './commands/report.js';
 import { getTestPlan } from './commands/getTestPlan.js';
 import { gate } from './commands/gate.js';
+import { collectAttachment, reportCase } from './commands/reportCase.js';
 
 // Initialize commanderq
 const program = new Command();
@@ -86,6 +87,23 @@ program
   .option('--environment <name>', 'Environment recorded on the build when --build creates it (e.g. Staging)')
   .action(report);
 
+// Report one execution as soon as it finishes. This is the Agent-friendly
+// counterpart to the file-oriented bulk `report` command.
+program
+  .command('reportCase')
+  .description('Report one assigned test case execution immediately')
+  .option('--api-key <key>', 'TestCollab API key (or set TESTCOLLAB_TOKEN env var)')
+  .requiredOption('--project <id>', 'TestCollab project ID')
+  .requiredOption('--test-plan-run-id <id>', 'Exact Test Plan run/regression ID')
+  .requiredOption('--executed-test-case-id <id>', 'Executed Test Case ID from tc getTestPlan')
+  .requiredOption('--status <system-name>', 'Active status system name, including custom statuses')
+  .option('--comment <text>', 'Execution comment')
+  .option('--time-taken <seconds>', 'Seconds spent executing this case')
+  .option('--step-results-file <path>', 'JSON array of step-wise results')
+  .option('--attachment <path>', 'Attach a file to this execution; repeatable', collectAttachment, [])
+  .option('--api-url <url>', 'TestCollab API base URL', 'https://api.testcollab.io')
+  .action(reportCase);
+
 // Add getTestPlan command
 program
   .command('getTestPlan')
@@ -93,6 +111,7 @@ program
   .option('--api-key <key>', 'TestCollab API key (or set TESTCOLLAB_TOKEN env var)')
   .requiredOption('--project <id>', 'TestCollab project ID')
   .requiredOption('--test-plan-id <id>', 'Test plan ID to fetch')
+  .option('--test-plan-run-id <id>', 'Include exact executions assigned to this caller in the run')
   .option('--api-url <url>', 'TestCollab API base URL', 'https://api.testcollab.io')
   .option('--output <path>', 'Write JSON to file instead of stdout')
   .action(getTestPlan);
