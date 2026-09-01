@@ -10,7 +10,7 @@ Your test names must include a TestCollab case ID (e.g., `[TC-123]`, `TC-123`, `
 
 ### Supported frameworks
 
-[Cypress](#cypress) | [Playwright](#playwright) | [Jest](#jest) | [Pytest](#pytest) | [TestNG](#testng) | [JUnit 4/5](#junit-45) | [Robot Framework](#robot-framework) | [PHPUnit](#phpunit) | [Cucumber.js](#cucumberjs) | [Cucumber JVM](#cucumber-jvm) | [WebDriverIO](#webdriverio) | [TestCafe](#testcafe) | [Newman (Postman)](#newman-postman) | [Behave (Python)](#behave-python) | [Go (`go test`)](#go-go-test) | [Kaspresso / Kotlin](#kaspresso--kotlin)
+[Cypress](#cypress) | [Playwright](#playwright) | [Sauce Labs (`saucectl`)](#sauce-labs-saucectl) | [Jest](#jest) | [Pytest](#pytest) | [TestNG](#testng) | [JUnit 4/5](#junit-45) | [Robot Framework](#robot-framework) | [PHPUnit](#phpunit) | [Cucumber.js](#cucumberjs) | [Cucumber JVM](#cucumber-jvm) | [WebDriverIO](#webdriverio) | [TestCafe](#testcafe) | [Newman (Postman)](#newman-postman) | [Behave (Python)](#behave-python) | [Go (`go test`)](#go-go-test) | [Kaspresso / Kotlin](#kaspresso--kotlin)
 
 ### JUnit XML example
 
@@ -165,6 +165,56 @@ export default {
 ```bash
 tc report --project 123 --test-plan-id 456 \
   --format junit --result-file ./results.xml
+```
+
+---
+
+## Sauce Labs (`saucectl`)
+
+`saucectl` runs your suite on the Sauce Labs grid and writes its own JUnit summary of the whole run — one `<testsuite>` per job, with the browser, the platform and the session URL in that suite's `<properties>`.
+
+**Run:**
+
+```bash
+saucectl run --reporters.junit.enabled=true
+```
+
+That writes `saucectl-report.xml` in the working directory (`--reporters.junit.filename` changes the name).
+
+**Upload:**
+
+```bash
+tc report --project 123 --test-plan-id 456 \
+  --format junit --result-file ./saucectl-report.xml
+```
+
+If the test plan has one configuration per browser, `tc report` matches each `saucectl` suite to its configuration and each browser keeps its own result — see [Configuration-specific runs](../README.md#configuration-specific-runs). The Sauce session URL is stored on each execution, so a failed result links straight back to its video and logs.
+
+`.sauce/config.yml` for the two-browser example:
+
+```yaml
+apiVersion: v1alpha
+kind: playwright
+sauce:
+  region: eu-central-1
+playwright:
+  version: 1.61.1
+  configFile: playwright.config.js
+rootDir: ./
+suites:
+  - name: "Chromium Win11"
+    platformName: "Windows 11"
+    testMatch: [".*.spec.js"]
+    params:
+      browserName: "chromium"
+  - name: "Firefox Win11"
+    platformName: "Windows 11"
+    testMatch: [".*.spec.js"]
+    params:
+      browserName: "firefox"
+reporters:
+  junit:
+    enabled: true
 ```
 
 ---
