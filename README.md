@@ -414,7 +414,33 @@ When using `--auto-create`, IDs are optional — tests without IDs are matched b
 
 #### Configuration-specific runs
 
-If your test plan uses multiple configurations, include the config ID in your test names:
+If your test plan uses multiple configurations (a Browser × OS matrix, for example), `tc report` writes one result per configuration.
+
+**Grid runners (Sauce Labs, and anything with the same report shape) — nothing to do.** A runner that fans one spec out over several browsers writes one top-level `<testsuite>` per job and names the browser in that suite's `<properties>`:
+
+```xml
+<testsuite name="Chromium Win11">
+  <properties>
+    <property name="url" value="https://app.eu-central-1.saucelabs.com/tests/13bdb6b5..."/>
+    <property name="browser" value="chromium 149"/>
+    <property name="platform" value="Windows 11"/>
+  </properties>
+  <testcase name="[TC-1] homepage has Playwright in the title" classname="tc.spec.js"/>
+</testsuite>
+```
+
+`tc report` matches each suite to one of the plan's configurations on browser and platform — case-insensitively, and ignoring the version suffix, so `chromium 149` matches a configuration of `Chromium`. If the configuration names something else entirely, the suite *name* is tried instead. The `url` property is stored on each execution, so a result links straight back to the session that produced it.
+
+Matching is all or nothing. If any suite has no configuration to go to, `tc report` maps none of them and says which suite and which configurations it had — a half-mapped upload would leave one browser overwriting another, which is harder to spot than no mapping at all.
+
+For `saucectl`, enable its own JUnit report and point `tc report` at it:
+
+```bash
+saucectl run --reporters.junit.enabled=true
+tc report --project 8 --test-plan-id 131 --format junit --result-file saucectl-report.xml
+```
+
+**Naming the configuration explicitly.** When your report has no browser properties, name the configuration ID in the test itself. An explicit marker always wins over the matching above:
 
 - **Mochawesome:** Use `config-id-<id>` as a top-level suite title
 - **JUnit:** Include `config-id-<id>` or `config-<id>` in the test case name or classname

@@ -225,7 +225,7 @@ On subsequent runs with `--auto-create`:
 
 ## Limitations
 
-- **No configuration support:** Auto-created plans do not support multi-configuration test plans. All results go to the default configuration.
+- **Configurations come from the report, or not at all:** when the report's top-level test suites name a browser and a platform (Sauce Labs and other grid runners do), the auto-created plan gets one configuration per browser and each browser keeps its own result. Any other report still has no configurations, and all results go to the default one.
 - **Title matching is exact:** Slight differences in test names (e.g., `"login test"` vs `"login tests"`) will result in duplicate test cases. Once created, add TC IDs to your test names for reliable matching.
 - **One plan per run:** Each `--auto-create` invocation creates a new test plan. There is no "reuse last plan" option.
 - **Suite nesting:** Auto-created suites are flat (parent_id: 0). Nested describe blocks or deep package hierarchies are collapsed to the innermost/last name.

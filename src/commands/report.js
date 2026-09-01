@@ -1939,7 +1939,12 @@ async function autoCreateTestPlan({ apiKey, apiUrl, projectId, parsedReport, bui
   // This has to happen before the assignment below, because the API refuses new
   // configurations once a plan has executed cases — and assignment is what
   // creates them.
-  const reportSuites = Array.isArray(parsedReport.reportSuites) ? parsedReport.reportSuites : [];
+  // Skipped when the report names configuration ids outright: those ids belong to
+  // a plan the author already has, and the upload honours them over anything
+  // derived from the suites.
+  const reportSuites = parsedReport.hasConfig || !Array.isArray(parsedReport.reportSuites)
+    ? []
+    : parsedReport.reportSuites;
   const createdConfigIds = reportSuites.length
     ? await createConfigurationsForSuites({
         apiKey,
