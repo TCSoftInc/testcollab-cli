@@ -1,0 +1,34 @@
+<testsuites tests="6" failures="1" errors="3">
+  <testsuite name="Chromium Win11" tests="3" failures="1" time="36">
+    <properties>
+      <property name="url" value="https://app.eu-central-1.saucelabs.com/tests/13bdb6b56d4c4ac0943de345ecd39b24"></property>
+      <property name="browser" value="chromium 149"></property>
+      <property name="platform" value="Windows 11"></property>
+    </properties>
+    <testcase name="[TC-1] homepage has Playwright in the title" time="1.608" timestamp="" classname="tc.spec.js"></testcase>
+    <testcase name="[TC-2] homepage shows a heading that does not exist" time="3.819" timestamp="" classname="tc.spec.js">
+      <system-out>&#xA;[[ATTACHMENT|test-results\tc--TC-2-homepage-shows-a-heading-that-does-not-exist-chromium\test-failed-1.png]]&#xA;&#xA;[[ATTACHMENT|test-results\tc--TC-2-homepage-shows-a-heading-that-does-not-exist-chromium\error-context.md]]&#xA;</system-out>
+      <failure message="expect(locator).toBeVisible() failed" type="expect.toBeVisible"></failure>
+    </testcase>
+    <testcase name="[TC-3] docs link resolves, firefox only asserts a wrong URL" time="1.597" timestamp="" classname="tc.spec.js"></testcase>
+  </testsuite>
+  <testsuite name="Firefox Win11" tests="3" errors="3" time="20">
+    <properties>
+      <property name="url" value="https://app.eu-central-1.saucelabs.com/tests/2f0a5c54fe9148d5854d78aedcc0b435"></property>
+      <property name="browser" value="firefox 151"></property>
+      <property name="platform" value="Windows 11"></property>
+    </properties>
+    <testcase name="[TC-1] homepage has Playwright in the title" time="0.005" timestamp="" classname="tc.spec.js">
+      <system-out>&#xA;[[ATTACHMENT|test-results\tc--TC-1-homepage-has-Playwright-in-the-title-firefox\error-context.md]]&#xA;</system-out>
+      <error message="browserType.launch: Host system is missing dependencies!" type="Error">  [firefox] › tc.spec.js:8:1 › [TC-1] homepage has Playwright in the title ─────────────────────────&#xA;&#xA;    Error: browserType.launch: Host system is missing dependencies!&#xA;&#xA;    Full list of missing libraries:&#xA;        msvcp140_1.dll&#xA;&#xA;&#xA;    Error Context: ..\__assets__\test-results\tc--TC-1-homepage-has-Playwright-in-the-title-firefox\error-context.md&#xA;</error>
+    </testcase>
+    <testcase name="[TC-2] homepage shows a heading that does not exist" time="0.005" timestamp="" classname="tc.spec.js">
+      <system-out>&#xA;[[ATTACHMENT|test-results\tc--TC-2-homepage-shows-a-heading-that-does-not-exist-firefox\error-context.md]]&#xA;</system-out>
+      <error message="browserType.launch: Host system is missing dependencies!" type="Error">  [firefox] › tc.spec.js:13:1 › [TC-2] homepage shows a heading that does not exist ────────────────&#xA;&#xA;    Error: browserType.launch: Host system is missing dependencies!&#xA;&#xA;    Full list of missing libraries:&#xA;        msvcp140_1.dll&#xA;&#xA;&#xA;    Error Context: ..\__assets__\test-results\tc--TC-2-homepage-shows-a-heading-that-does-not-exist-firefox\error-context.md&#xA;</error>
+    </testcase>
+    <testcase name="[TC-3] docs link resolves, firefox only asserts a wrong URL" time="0.006" timestamp="" classname="tc.spec.js">
+      <system-out>&#xA;[[ATTACHMENT|test-results\tc--TC-3-docs-link-resolves-firefox-only-asserts-a-wrong-URL-firefox\error-context.md]]&#xA;</system-out>
+      <error message="browserType.launch: Host system is missing dependencies!" type="Error">  [firefox] › tc.spec.js:19:1 › [TC-3] docs link resolves, firefox only asserts a wrong URL ────────&#xA;&#xA;    Error: browserType.launch: Host system is missing dependencies!&#xA;&#xA;    Full list of missing libraries:&#xA;        msvcp140_1.dll&#xA;&#xA;&#xA;    Error Context: ..\__assets__\test-results\tc--TC-3-docs-link-resolves-firefox-only-asserts-a-wrong-URL-firefox\error-context.md&#xA;</error>
+    </testcase>
+  </testsuite>
+</testsuites>
