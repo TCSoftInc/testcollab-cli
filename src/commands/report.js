@@ -27,6 +27,11 @@ import { resolveBuild } from '../lib/builds.js';
 import { buildExecutionProvenance } from '../utils/executionProvenance.js';
 import { decodeXmlEntities } from '../lib/xml.js';
 import { extractAttachmentPaths, resolveAttachments } from '../lib/attachments.js';
+import {
+  readSuiteConfigurationSource,
+  matchSuitesToConfigurations,
+  suiteToConfigurationParameters
+} from '../lib/reportConfigurations.js';
 
 const RUN_RESULT_MAP = {
   pass: 1,
@@ -173,6 +178,26 @@ function getFailureDetails(body) {
     message: '',
     stack: ''
   };
+}
+
+/**
+ * TCV-6921: read a `<properties>` block into a lower-cased name → value map.
+ * Lower-cased because runners disagree on the casing of `platformName`.
+ */
+function parseXmlProperties(propertiesBody) {
+  const properties = {};
+  const propertyRegex = /<property\b([^>]*?)\/?>/gi;
+  let match;
+
+  while ((match = propertyRegex.exec(String(propertiesBody || ''))) !== null) {
+    const attrs = parseXmlAttributes(match[1] || '');
+    const name = String(attrs.name || '').trim().toLowerCase();
+    if (name && attrs.value !== undefined) {
+      properties[name] = attrs.value;
+    }
+  }
+
+  return properties;
 }
 
 function collectAllTestsFromSuite(suite, parentSuitePath = []) {
@@ -494,10 +519,14 @@ export function parseJUnitXml(junitXmlContent) {
 
   // Walk the XML in document order so we can track nested <testsuite> elements
   // and assign each <testcase> the correct ancestor path. The token regex
-  // matches one of: a closing </testsuite>, an opening <testsuite> (possibly
-  // self-closing), or a complete <testcase> (self-closing or with body).
-  // \b ensures we don't match the outer <testsuites> wrapper.
-  const tokenRegex = /<\/testsuite\s*>|<testsuite\b([^>]*?)(\/?)>|<testcase\b([^>]*?)(?:\/>|>([\s\S]*?)<\/testcase\s*>)/gi;
+  // matches one of: a <properties> block, a closing </testsuite>, an opening
+  // <testsuite> (possibly self-closing), or a complete <testcase> (self-closing
+  // or with body). \b ensures we don't match the outer <testsuites> wrapper.
+  // A <properties> block nested inside a <testcase> is swallowed by the
+  // <testcase> alternative, so only a suite's own properties are seen here.
+  const tokenRegex = /<properties\b[^>]*>([\s\S]*?)<\/properties\s*>|<\/testsuite\s*>|<testsuite\b([^>]*?)(\/?)>|<testcase\b([^>]*?)(?:\/>|>([\s\S]*?)<\/testcase\s*>)/gi;
+  // Frames rather than bare names: TCV-6921 needs each suite's <properties>
+  // alongside its name.
   const suiteStack = [];
   // First pass: collect each testcase with a snapshot of its ancestor stack
   // and the maximum nesting depth seen anywhere in the file. This lets us
@@ -510,33 +539,50 @@ export function parseJUnitXml(junitXmlContent) {
   while ((token = tokenRegex.exec(junitXmlContent)) !== null) {
     const matched = token[0];
 
+    // TCV-6921: <properties> belongs to the suite currently open.
+    if (/^<properties\b/i.test(matched)) {
+      const currentFrame = suiteStack[suiteStack.length - 1];
+      if (currentFrame) {
+        Object.assign(currentFrame.properties, parseXmlProperties(token[1] || ''));
+      }
+      continue;
+    }
+
     if (/^<\/testsuite/i.test(matched)) {
       suiteStack.pop();
       continue;
     }
 
     if (/^<testsuite\b/i.test(matched)) {
-      const suiteAttrs = parseXmlAttributes(token[1] || '');
+      const suiteAttrs = parseXmlAttributes(token[2] || '');
       const suiteName = (suiteAttrs.name || '').trim();
-      suiteStack.push(suiteName);
+      suiteStack.push({ name: suiteName, properties: {} });
       if (suiteStack.length > maxStackDepth) {
         maxStackDepth = suiteStack.length;
       }
       // Self-closing <testsuite ... /> never wraps anything, so pop immediately.
-      if (token[2] === '/') {
+      if (token[3] === '/') {
         suiteStack.pop();
       }
       continue;
     }
 
     // <testcase ...>
-    const attrs = parseXmlAttributes(token[3] || '');
-    const body = token[4] || '';
+    const attrs = parseXmlAttributes(token[4] || '');
+    const body = token[5] || '';
 
     rawCases.push({
       attrs,
       body,
-      stackSnapshot: suiteStack.filter(Boolean).slice()
+      stackSnapshot: suiteStack.map((frame) => frame.name).filter(Boolean),
+      // TCV-6921: the outermost ancestor that names a browser or a platform is
+      // the job this result came from. Outermost first, because that is where
+      // saucectl puts it; the loop only exists so a runner that nests one level
+      // deeper still works.
+      configSource: suiteStack.reduce(
+        (found, frame) => found || readSuiteConfigurationSource(frame.name, frame.properties),
+        null
+      )
     });
   }
 
@@ -548,7 +594,7 @@ export function parseJUnitXml(junitXmlContent) {
   // behavior so existing reports keep working unchanged.
   const useNestedHierarchy = maxStackDepth >= 2;
 
-  const testCases = rawCases.map(({ attrs, body, stackSnapshot }) => {
+  const testCases = rawCases.map(({ attrs, body, stackSnapshot, configSource }) => {
     const rawName = (attrs.name || '').trim();
     const rawClassName = (attrs.classname || '').trim();
     const timeInSeconds = Number.parseFloat(attrs.time);
@@ -584,6 +630,9 @@ export function parseJUnitXml(junitXmlContent) {
       suitePath,
       testCaseId,
       configId,
+      // TCV-6921: the browser / platform / session URL of the job this result
+      // came from, or null for a report whose suites carry no such properties.
+      configSource: configSource || null,
       duration,
       state,
       failureMessage: failureDetails.message,
@@ -599,6 +648,23 @@ export function parseJUnitXml(junitXmlContent) {
   }
 
   return testCases;
+}
+
+/**
+ * TCV-6921: the distinct jobs a report was produced by, in document order.
+ * Keyed on the suite name, because that is what the result records carry back.
+ */
+function collectReportSuites(testCases) {
+  const bySuiteName = new Map();
+
+  testCases.forEach((testCase) => {
+    const source = testCase && testCase.configSource;
+    if (source && !bySuiteName.has(source.suiteName)) {
+      bySuiteName.set(source.suiteName, source);
+    }
+  });
+
+  return [...bySuiteName.values()];
 }
 
 export function parseJUnitReport(junitXmlContent) {
@@ -641,7 +707,8 @@ export function parseJUnitReport(junitXmlContent) {
       errDetails: String(testCase.failureStack || testCase.failureMessage || '').trim() || null,
       title: `${testCase.suite} ${testCase.title}`.trim(),
       duration: testCase.duration,
-      attachmentPaths: testCase.attachmentPaths
+      attachmentPaths: testCase.attachmentPaths,
+      configSource: testCase.configSource
     });
   });
 
@@ -653,6 +720,7 @@ export function parseJUnitReport(junitXmlContent) {
       : (tc.suite ? [tc.suite] : []),
     tcId: tc.testCaseId || null,
     configId: tc.configId ? String(tc.configId) : '0',
+    configSource: tc.configSource,
     status: toRunStatus(tc.state),
     errDetails: String(tc.failureStack || tc.failureMessage || '').trim() || null,
     duration: tc.duration,
@@ -666,6 +734,10 @@ export function parseJUnitReport(junitXmlContent) {
   return {
     format: 'junit',
     hasConfig,
+    // TCV-6921: the distinct browser/platform jobs the report was produced by,
+    // in document order. Empty for a report whose suites carry no such
+    // properties, which is every hand-written JUnit file.
+    reportSuites: collectReportSuites(testCases),
     resultsToUpload,
     allTests,
     stats: {
@@ -1060,7 +1132,12 @@ function buildUpdatePayload({ execCase, projectId, testPlanId, runRecord, config
   // the credential used, so this only refines what the token already proves.
   if (provenance) {
     payload.execution_source = provenance.execution_source;
-    payload.execution_context = provenance.execution_context;
+    // TCV-6921: the grid session this specific result came from — one URL per
+    // browser, so it cannot live on the run-wide provenance.
+    const sessionUrl = runRecord?.configSource?.sessionUrl;
+    payload.execution_context = sessionUrl
+      ? { ...provenance.execution_context, session_url: sessionUrl }
+      : provenance.execution_context;
   }
 
   if (hasConfig && configId && String(configId) !== '0') {
@@ -1127,6 +1204,30 @@ async function attachCaseArtefacts({ client, execCase, runRecord, companyId, bas
   }
 }
 
+/**
+ * TCV-6921: re-key the upload buckets from "no configuration" to the real
+ * configuration each result's suite was matched to. A record whose suite was not
+ * matched keeps its original bucket, so nothing is ever dropped.
+ */
+function groupResultsByConfiguration(resultsToUpload, configIdBySuiteName) {
+  const regrouped = {};
+
+  for (const [originalKey, records] of Object.entries(resultsToUpload || {})) {
+    for (const record of Array.isArray(records) ? records : []) {
+      const suiteName = record?.configSource?.suiteName;
+      const configId = suiteName !== undefined ? configIdBySuiteName[suiteName] : undefined;
+      const key = configId ? String(configId) : originalKey;
+
+      if (!regrouped[key]) {
+        regrouped[key] = [];
+      }
+      regrouped[key].push(record);
+    }
+  }
+
+  return regrouped;
+}
+
 async function uploadUsingReporterFlow({
   apiKey,
   projectId,
@@ -1137,7 +1238,8 @@ async function uploadUsingReporterFlow({
   unresolvedIds,
   skipMissing = false,
   buildId = null,
-  attachmentBaseDirs = []
+  attachmentBaseDirs = [],
+  reportSuites = []
 }) {
   const tcApiInstance = new TcApiClient({
     accessToken: apiKey,
@@ -1184,7 +1286,31 @@ async function uploadUsingReporterFlow({
     throw new Error('Run information not found.');
   }
 
-  await tcApiInstance.getTestplanConfigs();
+  const planConfigs = await tcApiInstance.getTestplanConfigs();
+
+  // TCV-6921: a runner that fans one spec out over several browsers gives every
+  // result the same name, so without this the browsers overwrite each other in
+  // one configuration and the rest of the plan stays unexecuted. An explicit
+  // config-id-N marker still wins — it is the author saying it outright.
+  if (!hasConfig && reportSuites.length) {
+    const mapping = matchSuitesToConfigurations(reportSuites, planConfigs);
+    if (mapping.matched) {
+      resultsToUpload = groupResultsByConfiguration(resultsToUpload, mapping.bySuiteName);
+      hasConfig = true;
+      reportSuites.forEach((suite) => {
+        console.log(
+          `ℹ️  Suite "${suite.suiteName}" (${[suite.browser, suite.platform].filter(Boolean).join(' / ')})` +
+            ` → configuration ${mapping.bySuiteName[suite.suiteName]}`
+        );
+      });
+    } else {
+      console.warn(
+        `⚠️  ${reportSuites.length} browser suite(s) in the report could not be mapped to configurations` +
+          ` (${mapping.reason}). All results will be written to whichever configuration each test case` +
+          ' matches first, so one browser will overwrite another.'
+      );
+    }
+  }
 
   const userData = await tcApiInstance.getUserInfo();
   if (!userData || !userData.id) {
@@ -1456,6 +1582,61 @@ function createSdkConfig(apiKey, apiUrl) {
 }
 
 /**
+ * TCV-6921: create one configuration per browser the report was produced on, for
+ * a plan `--auto-create` has just made.
+ *
+ * `POST /testplanconfigurations` takes the whole set in one call and replaces
+ * whatever the plan had, which is safe here only because the plan is new. It is
+ * not usable on an existing plan — see lib/reportConfigurations.js.
+ *
+ * A failure is a warning, not a throw: the results are still worth uploading
+ * without the per-browser split.
+ */
+async function createConfigurationsForSuites({ apiKey, effectiveApiUrl, projectId, testPlanId, suites }) {
+  const parameters = suites.map(suiteToConfigurationParameters).filter((set) => set.length);
+  if (!parameters.length) {
+    return [];
+  }
+
+  try {
+    const response = await fetch(
+      `${effectiveApiUrl}/testplanconfigurations?token=${encodeURIComponent(apiKey)}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ project: projectId, testplan: testPlanId, parameters })
+      }
+    );
+
+    if (!response.ok) {
+      const body = await response.text().catch(() => '');
+      throw new Error(`HTTP ${response.status} ${body}`);
+    }
+
+    const created = await response.json();
+    const ids = (Array.isArray(created) ? created : [])
+      .map((configuration) => configuration && configuration.id)
+      .filter(Boolean);
+
+    if (ids.length !== parameters.length) {
+      throw new Error(`expected ${parameters.length} configuration(s), got ${ids.length}`);
+    }
+
+    console.log(
+      `   ✓ ${ids.length} configuration(s) created: ` +
+        suites.map((suite) => [suite.browser, suite.platform].filter(Boolean).join(' / ')).join(', ')
+    );
+    return ids;
+  } catch (error) {
+    console.warn(
+      `⚠️  Could not create configurations for the report's browsers (${error?.message || String(error)}).` +
+        ' Continuing without them — every browser will write to the same result.'
+    );
+    return [];
+  }
+}
+
+/**
  * Auto-create mode orchestrator.
  *
  * Creates all missing TestCollab resources (tag, suites, test cases, folder, test plan)
@@ -1691,7 +1872,10 @@ async function autoCreateTestPlan({ apiKey, apiUrl, projectId, parsedReport, bui
       errDetails: test.errDetails,
       title: test.title,
       duration: test.duration,
-      attachmentPaths: test.attachmentPaths
+      attachmentPaths: test.attachmentPaths,
+      // TCV-6921: kept so the upload can put each browser's result on its own
+      // configuration, the same way it does for an existing plan.
+      configSource: test.configSource
     });
   }
   parsedReport.resultsToUpload = newResultsToUpload;
@@ -1751,6 +1935,21 @@ async function autoCreateTestPlan({ apiKey, apiUrl, projectId, parsedReport, bui
   const buildNote = build ? `, build: ${build.version}` : '';
   console.log(`   ✓ Test Plan "${planTitle}" (id: ${newPlan.id}${buildNote})`);
 
+  // 9b. TCV-6921: one configuration per browser the report was produced on.
+  // This has to happen before the assignment below, because the API refuses new
+  // configurations once a plan has executed cases — and assignment is what
+  // creates them.
+  const reportSuites = Array.isArray(parsedReport.reportSuites) ? parsedReport.reportSuites : [];
+  const createdConfigIds = reportSuites.length
+    ? await createConfigurationsForSuites({
+        apiKey,
+        effectiveApiUrl,
+        projectId,
+        testPlanId: newPlan.id,
+        suites: reportSuites
+      })
+    : [];
+
   // 10. Bulk-add test cases by tag
   const addResult = await testPlanCasesApi.bulkAddTestPlanTestCases({
     testPlanTestCaseBulkAddPayload: {
@@ -1771,18 +1970,20 @@ async function autoCreateTestPlan({ apiKey, apiUrl, projectId, parsedReport, bui
     throw new Error('Failed to add test cases to the test plan');
   }
 
-  // 11. Assign to current user
+  // 11. Assign to current user. TCV-6921: with configurations present the
+  // assignment has to be per configuration, otherwise only one row per test case
+  // is created and the browsers go back to overwriting each other.
   await testPlanAssignmentApi.assignTestPlan({
     project: projectId,
     testplan: newPlan.id,
     testPlanAssignmentPayload: {
       executor: 'team',
-      assignmentCriteria: 'testCase',
+      assignmentCriteria: createdConfigIds.length ? 'configuration' : 'testCase',
       assignmentMethod: 'automatic',
       assignment: {
         user: [currentUser.id],
         testCases: { testCases: [], selector: [] },
-        configuration: null
+        configuration: createdConfigIds.length ? createdConfigIds : null
       },
       project: projectId,
       testplan: newPlan.id
@@ -1947,7 +2148,10 @@ export async function report(options) {
       // TCV-6853: an [[ATTACHMENT|...]] path is written by the test runner, so it
       // is relative either to where the pipeline ran the tests or to where it
       // wrote the report. Absolute paths ignore both.
-      attachmentBaseDirs: unique([process.cwd(), path.dirname(absResultPath)])
+      attachmentBaseDirs: unique([process.cwd(), path.dirname(absResultPath)]),
+      // TCV-6921: the browser/platform jobs the report was produced by, matched
+      // to the plan's configurations so each browser keeps its own result.
+      reportSuites: parsedReport.reportSuites || []
     });
 
     logUploadSummary(normalizedFormat === 'junit' ? 'JUnit' : 'Mochawesome', summary);
