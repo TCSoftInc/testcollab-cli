@@ -1,0 +1,26 @@
+<testsuites tests="6" failures="1" time="129">
+  <testsuite name="Chrome" tests="3" failures="0" time="42">
+    <properties>
+      <property name="url" value="https://app.saucelabs.com/tests/job-chrome-1"></property>
+      <property name="browser" value="Chrome"></property>
+      <property name="device" value=""></property>
+      <property name="platform" value="Windows 11"></property>
+    </properties>
+    <testcase name="[TC-74002] Deployed page returns HTTP 200" classname="deployed-site.test.js" time="1.2"></testcase>
+    <testcase name="[TC-74004] Build number element is present on the page" classname="deployed-site.test.js" time="0.9"></testcase>
+    <testcase name="[TC-74010] Page responds in under two seconds" classname="deployed-site.test.js" time="1.8"></testcase>
+  </testsuite>
+  <testsuite name="Safari" tests="3" failures="1" time="87">
+    <properties>
+      <property name="url" value="https://app.saucelabs.com/tests/job-safari-1"></property>
+      <property name="browser" value="Safari"></property>
+      <property name="device" value=""></property>
+      <property name="platform" value="macOS 13"></property>
+    </properties>
+    <testcase name="[TC-74002] Deployed page returns HTTP 200" classname="deployed-site.test.js" time="1.6"></testcase>
+    <testcase name="[TC-74004] Build number element is present on the page" classname="deployed-site.test.js" time="1.1">
+      <failure message="expected element to be present" type="AssertionError">AssertionError: expected element to be present</failure>
+    </testcase>
+    <testcase name="[TC-74010] Page responds in under two seconds" classname="deployed-site.test.js" time="2.4"></testcase>
+  </testsuite>
+</testsuites>

@@ -9,8 +9,171 @@
 import fs from 'fs';
 import path from 'path';
 
-import { resolveAttachments } from '../lib/attachments.js';
+import { MAX_ATTACHMENT_BYTES, resolveAttachments } from '../lib/attachments.js';
 import { TcApiClient, encodeComment } from './report.js';
+
+export const APPROVED_AGENT_ARTIFACT_ROOT = '/agent/approved-artifacts';
+export const AGENT_RUN_MANIFEST = '/agent/run.json';
+const APPROVED_ARTIFACT_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+const MAX_AGENT_RUN_MANIFEST_BYTES = 1024 * 1024;
+
+const rejectUnapprovedAttachment = () => {
+  throw new Error('Agent attachments must be immutable copies approved by the Secret helper');
+};
+
+/**
+ * Resolve Agent mode without trusting only a mutable child-process environment.
+ * The model can unset TC_AGENT_RUN_ID, but it cannot replace the root-owned run
+ * manifest written by the harness. This remains defense in depth; backend
+ * authorization is still required to close direct API and bulk-report bypasses.
+ */
+export function resolveAgentRunId(environment = {}, options = {}) {
+  const filesystem = options.filesystem || fs;
+  const manifestPath = options.manifestPath || AGENT_RUN_MANIFEST;
+  const trustedUid = options.trustedUid === undefined ? 0 : options.trustedUid;
+  const trustedGid = options.trustedGid === undefined ? 0 : options.trustedGid;
+  const environmentRunId = String(environment.TC_AGENT_RUN_ID || '');
+  if (environmentRunId && !/^[1-9][0-9]*$/.test(environmentRunId)) {
+    rejectUnapprovedAttachment();
+  }
+
+  let manifestRunId = '';
+  let fd = null;
+  try {
+    fd = filesystem.openSync(
+      manifestPath,
+      filesystem.constants.O_RDONLY | filesystem.constants.O_NOFOLLOW
+    );
+    const stat = filesystem.fstatSync(fd);
+    if (
+      !stat.isFile() ||
+      stat.uid !== trustedUid ||
+      stat.gid !== trustedGid ||
+      (stat.mode & 0o022) !== 0 ||
+      stat.size <= 0 ||
+      stat.size > MAX_AGENT_RUN_MANIFEST_BYTES
+    ) {
+      rejectUnapprovedAttachment();
+    }
+    const manifest = JSON.parse(filesystem.readFileSync(fd, 'utf8'));
+    manifestRunId = String(manifest && manifest.agent_run || '');
+    if (!/^[1-9][0-9]*$/.test(manifestRunId)) rejectUnapprovedAttachment();
+  } catch (error) {
+    if (!error || error.code !== 'ENOENT') rejectUnapprovedAttachment();
+  } finally {
+    if (fd !== null) filesystem.closeSync(fd);
+  }
+
+  if (environmentRunId && manifestRunId && environmentRunId !== manifestRunId) {
+    rejectUnapprovedAttachment();
+  }
+  return environmentRunId || manifestRunId || null;
+}
+
+/**
+ * Verify the local capability represented by a promoted artifact path. This is
+ * deliberately a local safe-path control, not backend authorization: the root
+ * helper owns the parent and file, so the model uid cannot replace either
+ * between this check and the upload reopen.
+ */
+export function verifyApprovedAgentAttachments(rawPaths, options = {}) {
+  const filesystem = options.filesystem || fs;
+  const root = options.root || APPROVED_AGENT_ARTIFACT_ROOT;
+  const runId = String(options.runId || '');
+  const trustedUid = options.trustedUid === undefined ? 0 : options.trustedUid;
+  const trustedGid = options.trustedGid === undefined ? 0 : options.trustedGid;
+  if (!/^[1-9][0-9]*$/.test(runId) || !Number.isInteger(filesystem.constants.O_NOFOLLOW)) {
+    rejectUnapprovedAttachment();
+  }
+
+  let rootStat;
+  try {
+    rootStat = filesystem.lstatSync(root);
+  } catch {
+    rejectUnapprovedAttachment();
+  }
+  if (
+    !rootStat.isDirectory() ||
+    rootStat.isSymbolicLink() ||
+    rootStat.uid !== trustedUid ||
+    rootStat.gid !== trustedGid ||
+    (rootStat.mode & 0o777) !== 0o755
+  ) {
+    rejectUnapprovedAttachment();
+  }
+
+  const seen = new Set();
+  return (rawPaths || []).map((rawPath) => {
+    const candidate = String(rawPath || '');
+    if (
+      !path.isAbsolute(candidate) ||
+      path.normalize(candidate) !== candidate ||
+      candidate.includes('\u0000') ||
+      seen.has(candidate)
+    ) {
+      rejectUnapprovedAttachment();
+    }
+    const relative = path.relative(root, candidate);
+    const parts = relative.split(path.sep);
+    if (
+      relative.startsWith(`..${path.sep}`) ||
+      path.isAbsolute(relative) ||
+      parts.length !== 2 ||
+      !new RegExp(`^request-${runId}-[a-f0-9]{32}$`).test(parts[0]) ||
+      !APPROVED_ARTIFACT_NAME_PATTERN.test(parts[1])
+    ) {
+      rejectUnapprovedAttachment();
+    }
+
+    const requestDirectory = path.join(root, parts[0]);
+    let requestStat;
+    let fileStat;
+    let fd = null;
+    try {
+      requestStat = filesystem.lstatSync(requestDirectory);
+      fileStat = filesystem.lstatSync(candidate);
+      if (
+        !requestStat.isDirectory() ||
+        requestStat.isSymbolicLink() ||
+        requestStat.uid !== trustedUid ||
+        requestStat.gid !== trustedGid ||
+        (requestStat.mode & 0o777) !== 0o555 ||
+        !fileStat.isFile() ||
+        fileStat.isSymbolicLink() ||
+        fileStat.uid !== trustedUid ||
+        fileStat.gid !== trustedGid ||
+        fileStat.nlink !== 1 ||
+        (fileStat.mode & 0o777) !== 0o444 ||
+        fileStat.size > MAX_ATTACHMENT_BYTES
+      ) {
+        rejectUnapprovedAttachment();
+      }
+      fd = filesystem.openSync(
+        candidate,
+        filesystem.constants.O_RDONLY | filesystem.constants.O_NOFOLLOW
+      );
+      const opened = filesystem.fstatSync(fd);
+      if (
+        !opened.isFile() ||
+        opened.dev !== fileStat.dev ||
+        opened.ino !== fileStat.ino ||
+        opened.size !== fileStat.size ||
+        opened.nlink !== 1 ||
+        opened.uid !== trustedUid ||
+        opened.gid !== trustedGid ||
+        (opened.mode & 0o777) !== 0o444
+      ) {
+        rejectUnapprovedAttachment();
+      }
+    } catch {
+      rejectUnapprovedAttachment();
+    } finally {
+      if (fd !== null) filesystem.closeSync(fd);
+    }
+    seen.add(candidate);
+    return candidate;
+  });
+}
 
 const relationId = (value) =>
   value && typeof value === 'object' ? value.id : value;
@@ -67,8 +230,9 @@ function findExecutionQuery({ projectId, testPlanRunId, executedTestCaseId }) {
 /**
  * Throwing implementation used by tests and other commands.
  */
-export async function reportSingleCase(options) {
-  const apiKey = options.apiKey || process.env.TESTCOLLAB_TOKEN;
+export async function reportSingleCase(options, dependencies = {}) {
+  const environment = dependencies.environment || process.env;
+  const apiKey = options.apiKey || environment.TESTCOLLAB_TOKEN;
   if (!apiKey) {
     throw new Error('No API key provided. Pass --api-key or set TESTCOLLAB_TOKEN.');
   }
@@ -84,7 +248,27 @@ export async function reportSingleCase(options) {
 
   const timeTaken = optionalPositiveNumber(options.timeTaken, '--time-taken');
   const stepWiseResult = readStepResults(options.stepResultsFile);
-  const attachmentPaths = normalizeAttachments(options.attachment);
+  let attachmentPaths = normalizeAttachments(options.attachment);
+  if (attachmentPaths.length) {
+    const agentRunId = resolveAgentRunId(environment, {
+      filesystem: dependencies.filesystem,
+      manifestPath: dependencies.agentManifestPath,
+      trustedUid: dependencies.trustedUid,
+      trustedGid: dependencies.trustedGid,
+    });
+    // Human CLI use outside an Agent container retains ordinary attachment
+    // behavior. Agent mode is recognized by either immutable harness state or
+    // the run-scoped environment marker.
+    if (agentRunId) {
+      attachmentPaths = verifyApprovedAgentAttachments(attachmentPaths, {
+        runId: agentRunId,
+        root: dependencies.approvedArtifactRoot,
+        trustedUid: dependencies.trustedUid,
+        trustedGid: dependencies.trustedGid,
+        filesystem: dependencies.filesystem,
+      });
+    }
+  }
 
   const client = new TcApiClient({
     accessToken: apiKey,

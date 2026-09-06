@@ -8,6 +8,7 @@
  */
 
 import { Command } from 'commander';
+import { createRequire } from 'node:module';
 import { featuresync } from './commands/featuresync.js';
 import { createTestPlan } from './commands/createTestPlan.js';
 import { createBuild } from './commands/createBuild.js';
@@ -15,6 +16,18 @@ import { report } from './commands/report.js';
 import { getTestPlan } from './commands/getTestPlan.js';
 import { gate } from './commands/gate.js';
 import { collectAttachment, reportCase } from './commands/reportCase.js';
+import {
+  applySecretRunResult,
+  collectArtifact,
+  collectSecret,
+  describeSecret,
+  listSecrets,
+  runWithSecrets,
+  safeSecretCommandError
+} from './commands/secret.js';
+
+const require = createRequire(import.meta.url);
+const { version } = require('../package.json');
 
 // Initialize commanderq
 const program = new Command();
@@ -22,7 +35,7 @@ const program = new Command();
 program
   .name('tc')
   .description('TestCollab CLI - Command-line interface for TestCollab operations')
-  .version('1.0.0')
+  .version(version)
   // TCV-6794: only treat `tc`'s own options (-V/--version, -h) as such before the
   // subcommand name, so `tc createBuild --version <build version>` reaches the
   // command instead of printing the CLI version. `tc --version` still works.
@@ -133,6 +146,55 @@ program
   .option('--poll-interval <seconds>', 'Seconds between polls when --wait is set', '15')
   .option('--api-url <url>', 'TestCollab API base URL override', 'https://api.testcollab.io')
   .action(gate);
+
+const secret = program
+  .command('secret')
+  .description('Inspect granted Agent secret metadata or run a command through the trusted secret helper');
+
+secret
+  .command('list')
+  .description('List secret names and types granted to this Agent run (never values)')
+  .action(() => {
+    try {
+      listSecrets();
+    } catch (error) {
+      console.error(`❌ Error: ${safeSecretCommandError(error)}`);
+      process.exitCode = 2;
+    }
+  });
+
+secret
+  .command('describe <name>')
+  .description('Show allowlisted metadata for one granted secret (never its value)')
+  .action((name) => {
+    try {
+      describeSecret(name);
+    } catch (error) {
+      console.error(`❌ Error: ${safeSecretCommandError(error)}`);
+      process.exitCode = 2;
+    }
+  });
+
+secret
+  .command('run')
+  .description('Run a command through the trusted local helper with selected secrets and/or brokered artifacts')
+  .option('--secret <name>', 'Granted secret name; repeat for multiple secrets', collectSecret, [])
+  .option('--artifact <basename>', 'Promote a file written to $TC_AGENT_ARTIFACT_DIR after an exact secret scan; repeatable', collectArtifact, [])
+  .argument('<command...>', 'Command and arguments following --')
+  .passThroughOptions()
+  .action(async (command, options) => {
+    try {
+      const result = await runWithSecrets({
+        secret: options.secret,
+        artifact: options.artifact,
+        command
+      });
+      applySecretRunResult(result);
+    } catch (error) {
+      console.error(`❌ Error: ${safeSecretCommandError(error)}`);
+      process.exitCode = 2;
+    }
+  });
 
 // Parse command line arguments and execute the program
 program.parse(process.argv);

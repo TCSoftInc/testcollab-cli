@@ -882,3 +882,24 @@ npx tc sync --project 123
 ## License
 
 MIT
+
+
+### Secrets in an Agent run
+
+A Secret is one name/value pair. Only explicitly granted Secret names and their
+environment-variable mappings appear in the run manifest; values are never
+printed by these commands:
+
+```sh
+tc secret list
+tc secret describe LOGIN_PASSWORD
+tc secret run --secret LOGIN_USERNAME --secret LOGIN_PASSWORD -- node tests/login.js
+```
+
+`run` asks the trusted local helper to supply the selected values to an isolated
+test subprocess. Read `process.env.TC_SECRET_LOGIN_USERNAME` and
+`process.env.TC_SECRET_LOGIN_PASSWORD` in the script. For existing names with
+mixed case or punctuation, use the exact environment mapping from `describe`.
+Do not print, persist, or commit credentials. Commit reusable test source only,
+not run evidence. These commands require the Agent runner helper, not a regular
+user API token on an arbitrary workstation.

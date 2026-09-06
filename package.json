@@ -3,6 +3,14 @@
   "version": "1.10.1",
   "description": "Command-line interface for TestCollab operations",
   "main": "src/index.js",
+  "files": [
+    "src/",
+    "docs/",
+    "samples/",
+    "claude-code-skill/",
+    "codex-skill/",
+    "hermes-skill/"
+  ],
   "bin": {
     "tc": "./src/index.js"
   },
