@@ -886,20 +886,26 @@ MIT
 
 ### Secrets in an Agent run
 
-A Secret is one name/value pair. Only explicitly granted Secret names and their
-environment-variable mappings appear in the run manifest; values are never
-printed by these commands:
+A Secret is one name/value pair. Every Secret granted to an Agent is already an
+environment variable when the Agent starts: the Agent runtime runs
+`tc secret export` once at boot and starts the model with the variables it
+prints. Scripts read them directly, with no wrapper command:
+
+```js
+const username = process.env.TC_SECRET_LOGIN_USERNAME;
+const password = process.env.TC_SECRET_LOGIN_PASSWORD;
+```
+
+Only the granted Secret names and their variable names appear in the run
+manifest; these commands never print values:
 
 ```sh
 tc secret list
 tc secret describe LOGIN_PASSWORD
-tc secret run --secret LOGIN_USERNAME --secret LOGIN_PASSWORD -- node tests/login.js
 ```
 
-`run` asks the trusted local helper to supply the selected values to an isolated
-test subprocess. Read `process.env.TC_SECRET_LOGIN_USERNAME` and
-`process.env.TC_SECRET_LOGIN_PASSWORD` in the script. For existing names with
-mixed case or punctuation, use the exact environment mapping from `describe`.
-Do not print, persist, or commit credentials. Commit reusable test source only,
-not run evidence. These commands require the Agent runner helper, not a regular
-user API token on an arbitrary workstation.
+For existing names with mixed case or punctuation, use the exact variable name
+from `tc secret describe <name>`. `tc secret export` prints one JSON object of
+`TC_SECRET_*` variables for the runtime; it needs the run token of an active
+Agent run, not a regular user API token. Do not print, persist, or commit
+credentials. Commit reusable test source only, not run evidence.

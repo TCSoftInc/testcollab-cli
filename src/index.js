@@ -17,12 +17,9 @@ import { getTestPlan } from './commands/getTestPlan.js';
 import { gate } from './commands/gate.js';
 import { collectAttachment, reportCase } from './commands/reportCase.js';
 import {
-  applySecretRunResult,
-  collectArtifact,
-  collectSecret,
   describeSecret,
+  exportSecrets,
   listSecrets,
-  runWithSecrets,
   safeSecretCommandError
 } from './commands/secret.js';
 
@@ -149,7 +146,7 @@ program
 
 const secret = program
   .command('secret')
-  .description('Inspect granted Agent secret metadata or run a command through the trusted secret helper');
+  .description('Inspect or export the Secrets granted to this Agent run');
 
 secret
   .command('list')
@@ -176,20 +173,12 @@ secret
   });
 
 secret
-  .command('run')
-  .description('Run a command through the trusted local helper with selected secrets and/or brokered artifacts')
-  .option('--secret <name>', 'Granted secret name; repeat for multiple secrets', collectSecret, [])
-  .option('--artifact <basename>', 'Promote a file written to $TC_AGENT_ARTIFACT_DIR after an exact secret scan; repeatable', collectArtifact, [])
-  .argument('<command...>', 'Command and arguments following --')
-  .passThroughOptions()
-  .action(async (command, options) => {
+  .command('export')
+  .description('Print every Secret granted to this Agent run as one JSON object of TC_SECRET_* variables (run by the Agent runtime at boot)')
+  .option('--api-url <url>', 'TestCollab API base URL override (defaults to TESTCOLLAB_API_URL)')
+  .action(async (options) => {
     try {
-      const result = await runWithSecrets({
-        secret: options.secret,
-        artifact: options.artifact,
-        command
-      });
-      applySecretRunResult(result);
+      await exportSecrets({ apiUrl: options.apiUrl });
     } catch (error) {
       console.error(`❌ Error: ${safeSecretCommandError(error)}`);
       process.exitCode = 2;

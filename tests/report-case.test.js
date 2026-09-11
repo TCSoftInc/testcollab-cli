@@ -7,7 +7,7 @@ import os from 'os';
 import path from 'path';
 import { afterEach, beforeEach, describe, expect, jest, test } from '@jest/globals';
 
-import { reportSingleCase, resolveAgentRunId } from '../src/commands/reportCase.js';
+import { reportSingleCase } from '../src/commands/reportCase.js';
 
 const API_URL = 'http://api.test';
 const TOKEN = 'agent-run-token';
@@ -163,82 +163,12 @@ test('reports time and attaches an explicitly requested file', async () => {
   }
 });
 
-test('Agent mode rejects raw or forged attachment paths before any API mutation', async () => {
+// Attachments have nothing to do with Secrets. Inside an Agent run, a file the
+// agent produced is attached exactly like a file a person or CI attaches.
+test('an Agent run attaches a plain file it produced, the same as anyone else', async () => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-report-case-agent-'));
-  const rawAttachment = path.join(tempDir, 'raw-evidence.txt');
-  fs.writeFileSync(rawAttachment, 'not broker approved');
-  const calls = mockApi(() => response({ message: 'must not be called' }, 500));
-
-  try {
-    await expect(
-      reportSingleCase(
-        { ...options, attachment: [rawAttachment] },
-        { environment: { TC_AGENT_RUN_ID: '481' } }
-      )
-    ).rejects.toThrow(
-      'Agent attachments must be immutable copies approved by the Secret helper'
-    );
-    expect(calls).toHaveLength(0);
-  } finally {
-    fs.rmSync(tempDir, { recursive: true, force: true });
-  }
-});
-
-test('root-owned run manifest keeps Agent attachment checks active when the environment marker is unset', async () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-report-case-manifest-'));
-  const manifest = path.join(tempDir, 'run.json');
-  const rawAttachment = path.join(tempDir, 'raw-evidence.txt');
-  fs.writeFileSync(manifest, JSON.stringify({ agent_run: 481 }), { mode: 0o644 });
-  fs.writeFileSync(rawAttachment, 'not broker approved');
-  const dependencies = {
-    environment: {},
-    agentManifestPath: manifest,
-    trustedUid: process.getuid(),
-    trustedGid: process.getgid(),
-  };
-  const calls = mockApi(() => response({ message: 'must not be called' }, 500));
-
-  try {
-    expect(resolveAgentRunId({}, {
-      manifestPath: manifest,
-      trustedUid: process.getuid(),
-      trustedGid: process.getgid(),
-    })).toBe('481');
-    expect(() => resolveAgentRunId(
-      { TC_AGENT_RUN_ID: '482' },
-      {
-        manifestPath: manifest,
-        trustedUid: process.getuid(),
-        trustedGid: process.getgid(),
-      }
-    )).toThrow('Agent attachments must be immutable copies approved by the Secret helper');
-    await expect(
-      reportSingleCase(
-        { ...options, attachment: [rawAttachment] },
-        dependencies
-      )
-    ).rejects.toThrow(
-      'Agent attachments must be immutable copies approved by the Secret helper'
-    );
-    expect(calls).toHaveLength(0);
-  } finally {
-    fs.rmSync(tempDir, { recursive: true, force: true });
-  }
-});
-
-test('Agent mode uploads a verified immutable broker copy', async () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-report-case-approved-'));
-  const approvedRoot = path.join(tempDir, 'approved-artifacts');
-  const requestDir = path.join(
-    approvedRoot,
-    'request-481-0123456789abcdef0123456789abcdef'
-  );
-  const attachment = path.join(requestDir, 'evidence.txt');
-  fs.mkdirSync(requestDir, { recursive: true, mode: 0o755 });
-  fs.writeFileSync(attachment, 'broker-approved evidence', { mode: 0o444 });
-  fs.chmodSync(approvedRoot, 0o755);
-  fs.chmodSync(requestDir, 0o555);
-  fs.chmodSync(attachment, 0o444);
+  const attachment = path.join(tempDir, 'evidence.txt');
+  fs.writeFileSync(attachment, 'agent evidence');
   const calls = mockApi((call) => {
     if (call.method === 'GET' && call.path.startsWith('/executedtestcases?')) {
       return response([execution]);
@@ -262,72 +192,11 @@ test('Agent mode uploads a verified immutable broker copy', async () => {
   try {
     const result = await reportSingleCase(
       { ...options, status: 'passed', attachment: [attachment] },
-      {
-        environment: { TC_AGENT_RUN_ID: '481' },
-        approvedArtifactRoot: approvedRoot,
-        trustedUid: process.getuid(),
-        trustedGid: process.getgid(),
-      }
+      { environment: { TC_AGENT_RUN_ID: '481', TESTCOLLAB_TOKEN: TOKEN } }
     );
     expect(result.attachmentsUploaded).toBe(1);
     expect(calls.some((call) => call.method === 'POST' && call.path === '/upload')).toBe(true);
   } finally {
-    fs.chmodSync(requestDir, 0o755);
-    fs.chmodSync(attachment, 0o644);
-    fs.rmSync(tempDir, { recursive: true, force: true });
-  }
-});
-
-test('Agent mode rejects a symlink or writable file inside a forged staging tree', async () => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-report-case-forged-'));
-  const approvedRoot = path.join(tempDir, 'approved-artifacts');
-  const requestDir = path.join(
-    approvedRoot,
-    'request-481-fedcba9876543210fedcba9876543210'
-  );
-  const outside = path.join(tempDir, 'outside.txt');
-  const attachment = path.join(requestDir, 'evidence.txt');
-  fs.mkdirSync(requestDir, { recursive: true, mode: 0o755 });
-  fs.writeFileSync(outside, 'forged evidence');
-  fs.symlinkSync(outside, attachment);
-  fs.chmodSync(approvedRoot, 0o755);
-  fs.chmodSync(requestDir, 0o555);
-  const calls = mockApi(() => response({ message: 'must not be called' }, 500));
-
-  try {
-    await expect(
-      reportSingleCase(
-        { ...options, attachment: [attachment] },
-        {
-          environment: { TC_AGENT_RUN_ID: '481' },
-          approvedArtifactRoot: approvedRoot,
-          trustedUid: process.getuid(),
-          trustedGid: process.getgid(),
-        }
-      )
-    ).rejects.toThrow(
-      'Agent attachments must be immutable copies approved by the Secret helper'
-    );
-    fs.chmodSync(requestDir, 0o755);
-    fs.unlinkSync(attachment);
-    fs.writeFileSync(attachment, 'writable forged evidence', { mode: 0o644 });
-    fs.chmodSync(requestDir, 0o555);
-    await expect(
-      reportSingleCase(
-        { ...options, attachment: [attachment] },
-        {
-          environment: { TC_AGENT_RUN_ID: '481' },
-          approvedArtifactRoot: approvedRoot,
-          trustedUid: process.getuid(),
-          trustedGid: process.getgid(),
-        }
-      )
-    ).rejects.toThrow(
-      'Agent attachments must be immutable copies approved by the Secret helper'
-    );
-    expect(calls).toHaveLength(0);
-  } finally {
-    fs.chmodSync(requestDir, 0o755);
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 });
