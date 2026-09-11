@@ -12,7 +12,7 @@
  * - --api-key        API token
  * - --project        Project ID
  * - --test-plan-id   Test plan ID to fetch
- * - --api-url        (defaults to https://api.testcollab.io)
+ * - --api-url        (defaults to TESTCOLLAB_API_URL, then https://api.testcollab.io)
  * - --output         Write JSON to file instead of stdout
  */
 

@@ -17,7 +17,7 @@
  * - --commit           Commit SHA the build was produced from
  * - --notes            Free-text note
  * - --api-key          API token
- * - --api-url          (defaults to https://api.testcollab.io)
+ * - --api-url          (defaults to TESTCOLLAB_API_URL, then https://api.testcollab.io)
  *
  * The build is matched on version first and only created when missing, so a
  * pipeline that re-runs (or several jobs of the same run) never records the same

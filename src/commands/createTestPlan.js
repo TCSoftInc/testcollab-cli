@@ -13,7 +13,7 @@
  * - --release        Release ID the plan belongs to (TCV-6788)
  * - --override-assignees  Give --assignee-id every test case, replacing the
  *                    default assignees inherited from the test cases (TCV-6891)
- * - --api-url        (defaults to https://api.testcollab.io)
+ * - --api-url        (defaults to TESTCOLLAB_API_URL, then https://api.testcollab.io)
  */
 
 import fs from 'fs';

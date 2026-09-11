@@ -192,4 +192,5 @@ in an Ansible playbook run by Ansible Tower / AWX — a non-zero exit fails the 
 ## EU region
 
 If your account is hosted in the EU, add `--api-url https://api-eu.testcollab.io` to
-the `tc report` and `tc gate` commands.
+the `tc report` and `tc gate` commands, or set the `TESTCOLLAB_API_URL` environment
+variable once for the pipeline.

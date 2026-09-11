@@ -76,7 +76,7 @@ tc createBuild \
 | `--commit <sha>` | No | Commit SHA the build was produced from |
 | `--notes <text>` | No | Free-text note about the build |
 | `--api-key <key>` | No | TestCollab API key (or set `TESTCOLLAB_TOKEN` env var) |
-| `--api-url <url>` | No | API base URL (default: `https://api.testcollab.io`). Use `https://api-eu.testcollab.io` for EU region. |
+| `--api-url <url>` | No | API base URL (or set `TESTCOLLAB_API_URL` env var; default: `https://api.testcollab.io`). Use `https://api-eu.testcollab.io` for EU region. |
 
 **Output:** Writes the build ID to `tmp/tc_build` as `TESTCOLLAB_BUILD_ID=<id>`, so later steps can reference it (the same way `createTestPlan` writes `tmp/tc_test_plan`).
 
@@ -142,7 +142,7 @@ tc createTestPlan \
 | `--release <id>` | No | Release ID the plan belongs to |
 | `--override-assignees` | No | Assign **every** test case to `--assignee-id`, replacing the default assignees the test cases carry. Off by default. |
 | `--api-key <key>` | No | TestCollab API key (or set `TESTCOLLAB_TOKEN` env var) |
-| `--api-url <url>` | No | API base URL (default: `https://api.testcollab.io`). Use `https://api-eu.testcollab.io` for EU region. |
+| `--api-url <url>` | No | API base URL (or set `TESTCOLLAB_API_URL` env var; default: `https://api.testcollab.io`). Use `https://api-eu.testcollab.io` for EU region. |
 
 **Output:** Writes the created plan ID to `tmp/tc_test_plan` as `TESTCOLLAB_TEST_PLAN_ID=<id>`. You can source this file in subsequent CI steps.
 
@@ -199,7 +199,7 @@ tc getTestPlan \
 | `--test-plan-id <id>` | Yes | Test plan ID to fetch |
 | `--test-plan-run-id <id>` | No | Include exact execution rows assigned to the authenticated caller in this run |
 | `--api-key <key>` | No | TestCollab API key (or set `TESTCOLLAB_TOKEN` env var) |
-| `--api-url <url>` | No | API base URL (default: `https://api.testcollab.io`). Use `https://api-eu.testcollab.io` for EU region. |
+| `--api-url <url>` | No | API base URL (or set `TESTCOLLAB_API_URL` env var; default: `https://api.testcollab.io`). Use `https://api-eu.testcollab.io` for EU region. |
 | `--output <path>` | No | Write JSON to file instead of stdout |
 
 **Output shape** (HTML is stripped from step text and descriptions):
@@ -280,7 +280,7 @@ tc reportCase \
 | `--step-results-file <path>` | No | JSON array of step-wise result records |
 | `--attachment <path>` | No | File to attach; repeat the option for multiple files |
 | `--api-key <key>` | No | TestCollab API key (or set `TESTCOLLAB_TOKEN`) |
-| `--api-url <url>` | No | API base URL override |
+| `--api-url <url>` | No | API base URL (or set `TESTCOLLAB_API_URL` env var; default: `https://api.testcollab.io`) |
 
 The command verifies that the execution belongs to the requested run before it
 writes anything. With an Agent run token, the backend also enforces the run,
@@ -308,7 +308,7 @@ tc report --project <id> --test-plan-id <id> --format <mochawesome|junit> --resu
 | `--format <type>` | Yes | `mochawesome` or `junit` |
 | `--result-file <path>` | Yes | Path to the result file |
 | `--api-key <key>` | No | TestCollab API key (or set `TESTCOLLAB_TOKEN` env var) |
-| `--api-url <url>` | No | API base URL override (default: `https://api.testcollab.io`). Use `https://api-eu.testcollab.io` for EU region. |
+| `--api-url <url>` | No | API base URL override (or set `TESTCOLLAB_API_URL` env var; default: `https://api.testcollab.io`). Use `https://api-eu.testcollab.io` for EU region. |
 | `--skip-missing` | No | Mark test cases in the test plan but not in the result file as **skipped** |
 | `--auto-create` | * | Auto-create tag, suites, test cases, folder, and test plan from result file |
 | `--build <idOrVersion>` | No | Build the results were run against, by id or version. A version with no build yet is created as one. Requires `--auto-create`. |
@@ -500,7 +500,7 @@ tc gate --project 45 --test-plan-id 123 --fail-on failed
 | `--wait <seconds>` | No | `0` | Poll until the run has no unexecuted cases, up to this many seconds (for "hold the deploy until QA finishes") |
 | `--poll-interval <seconds>` | No | `15` | Seconds between polls when `--wait` is set |
 | `--api-key <key>` | No | — | API key (or set `TESTCOLLAB_TOKEN`) |
-| `--api-url <url>` | No | `https://api.testcollab.io` | API base URL (use `https://api-eu.testcollab.io` for EU) |
+| `--api-url <url>` | No | `https://api.testcollab.io` (or set `TESTCOLLAB_API_URL`) | API base URL (use `https://api-eu.testcollab.io` for EU) |
 
 **Exit codes:** `0` gate passed · `1` gate failed · `2` usage / API error.
 
@@ -544,7 +544,7 @@ tc sync --project <id> [--api-key <key>] [--api-url <url>]
 |--------|----------|-------------|
 | `--project <id>` | Yes | TestCollab project ID |
 | `--api-key <key>` | No | TestCollab API key (or set `TESTCOLLAB_TOKEN` env var) |
-| `--api-url <url>` | No | API base URL (default: `https://api.testcollab.io`). Use `https://api-eu.testcollab.io` for EU region. |
+| `--api-url <url>` | No | API base URL (or set `TESTCOLLAB_API_URL` env var; default: `https://api.testcollab.io`). Use `https://api-eu.testcollab.io` for EU region. |
 
 #### How it works
 
@@ -586,7 +586,7 @@ All commands authenticate the same way. Provide your API key using **either** me
 
 **Getting your API token:** Go to TestCollab → Account Settings → API Tokens.
 
-**EU region:** If your TestCollab account is hosted in the EU, pass `--api-url https://api-eu.testcollab.io` to all commands.
+**EU region:** If your TestCollab account is hosted in the EU, pass `--api-url https://api-eu.testcollab.io` to all commands, or set the `TESTCOLLAB_API_URL` environment variable once.
 
 ### Setting the token
 

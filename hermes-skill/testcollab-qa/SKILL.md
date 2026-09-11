@@ -15,7 +15,7 @@ metadata:
         description: "TestCollab project ID"
         default: ""
       - key: testcollab.api_url
-        description: "TestCollab API base URL"
+        description: "TestCollab API base URL (or set TESTCOLLAB_API_URL env var)"
         default: "https://api.testcollab.io"
     required_environment_variables:
       - name: TESTCOLLAB_TOKEN

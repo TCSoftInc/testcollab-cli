@@ -9,6 +9,7 @@
 
 import { Command } from 'commander';
 import { createRequire } from 'node:module';
+import { defaultApiUrl } from './apiUrl.js';
 import { featuresync } from './commands/featuresync.js';
 import { createTestPlan } from './commands/createTestPlan.js';
 import { createBuild } from './commands/createBuild.js';
@@ -44,7 +45,7 @@ program
   .description('Synchronize Gherkin feature files with TestCollab using Git')
   .option('--api-key <key>', 'TestCollab API key (or set TESTCOLLAB_TOKEN env var)')
   .requiredOption('--project <id>', 'TestCollab project ID')
-  .option('--api-url <url>', 'TestCollab API base URL', 'https://api.testcollab.io')
+  .option('--api-url <url>', 'TestCollab API base URL (or set TESTCOLLAB_API_URL env var)', defaultApiUrl())
   .action(featuresync);
 
 // Add createTestPlan command
@@ -60,7 +61,7 @@ program
   // TCV-6891: off by default, which keeps the default assignee each test case
   // carries (TCV-6779) and gives --assignee-id only the cases without one.
   .option('--override-assignees', 'Assign every test case to --assignee-id, replacing the default assignees inherited from the test cases', false)
-  .option('--api-url <url>', 'TestCollab API base URL', 'https://api.testcollab.io')
+  .option('--api-url <url>', 'TestCollab API base URL (or set TESTCOLLAB_API_URL env var)', defaultApiUrl())
   .action(createTestPlan);
 
 // Add createBuild command (TCV-6794)
@@ -78,7 +79,7 @@ program
   .option('--commit-url <url>', 'Link to the commit in your VCS (default: detected from the CI environment)')
   .option('--repo-url <url>', 'Link to the repository the build was produced from (default: from CI)')
   .option('--notes <text>', 'Free-text note about the build')
-  .option('--api-url <url>', 'TestCollab API base URL', 'https://api.testcollab.io')
+  .option('--api-url <url>', 'TestCollab API base URL (or set TESTCOLLAB_API_URL env var)', defaultApiUrl())
   .action(createBuild);
 
 // Add report command
@@ -90,7 +91,7 @@ program
   .option('--test-plan-id <id>', 'Test Plan ID (required unless --auto-create is used)')
   .requiredOption('--format <type>', 'Result format: mochawesome or junit')
   .requiredOption('--result-file <path>', 'Path to test result file')
-  .option('--api-url <url>', 'TestCollab API base URL override', 'https://api.testcollab.io')
+  .option('--api-url <url>', 'TestCollab API base URL (or set TESTCOLLAB_API_URL env var)', defaultApiUrl())
   .option('--skip-missing', 'Mark test cases in the test plan but not in the result file as skipped', false)
   .option('--auto-create', 'Auto-create missing tag, suites, test cases, folder, and test plan from result file')
   .option('--build <idOrVersion>', 'Build the results were run against, by id or version; the version is created as a build if no build records it yet (requires --auto-create)')
@@ -111,7 +112,7 @@ program
   .option('--time-taken <seconds>', 'Seconds spent executing this case')
   .option('--step-results-file <path>', 'JSON array of step-wise results')
   .option('--attachment <path>', 'Attach a file to this execution; repeatable', collectAttachment, [])
-  .option('--api-url <url>', 'TestCollab API base URL', 'https://api.testcollab.io')
+  .option('--api-url <url>', 'TestCollab API base URL (or set TESTCOLLAB_API_URL env var)', defaultApiUrl())
   .action(reportCase);
 
 // Add getTestPlan command
@@ -122,7 +123,7 @@ program
   .requiredOption('--project <id>', 'TestCollab project ID')
   .requiredOption('--test-plan-id <id>', 'Test plan ID to fetch')
   .option('--test-plan-run-id <id>', 'Include exact executions assigned to this caller in the run')
-  .option('--api-url <url>', 'TestCollab API base URL', 'https://api.testcollab.io')
+  .option('--api-url <url>', 'TestCollab API base URL (or set TESTCOLLAB_API_URL env var)', defaultApiUrl())
   .option('--output <path>', 'Write JSON to file instead of stdout')
   .action(getTestPlan);
 
@@ -141,7 +142,7 @@ program
   .option('--regression <id>', 'Evaluate a specific run/regression (default: latest)')
   .option('--wait <seconds>', 'Poll until the run has no unexecuted cases, up to this many seconds', '0')
   .option('--poll-interval <seconds>', 'Seconds between polls when --wait is set', '15')
-  .option('--api-url <url>', 'TestCollab API base URL override', 'https://api.testcollab.io')
+  .option('--api-url <url>', 'TestCollab API base URL (or set TESTCOLLAB_API_URL env var)', defaultApiUrl())
   .action(gate);
 
 const secret = program
@@ -175,7 +176,7 @@ secret
 secret
   .command('export')
   .description('Print every Secret granted to this Agent run as one JSON object of TC_SECRET_* variables (run by the Agent runtime at boot)')
-  .option('--api-url <url>', 'TestCollab API base URL override (defaults to TESTCOLLAB_API_URL)')
+  .option('--api-url <url>', 'TestCollab API base URL (or set TESTCOLLAB_API_URL env var)', defaultApiUrl())
   .action(async (options) => {
     try {
       await exportSecrets({ apiUrl: options.apiUrl });

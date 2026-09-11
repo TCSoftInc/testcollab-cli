@@ -164,7 +164,8 @@ Options:
   --test-plan-id <id>   Test Plan ID (required unless --auto-create)
   --format <type>       Result format: mochawesome or junit (required)
   --result-file <path>  Path to test result file (required)
-  --api-url <url>       TestCollab API base URL (default: https://api.testcollab.io)
+  --api-url <url>       TestCollab API base URL (or set TESTCOLLAB_API_URL env var;
+                        default: https://api.testcollab.io)
   --skip-missing        Mark unmatched plan cases as skipped (default: false)
   --auto-create         Auto-create all missing resources from result file
   --build <idOrVersion> Build the results were run against, by id or version

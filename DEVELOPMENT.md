@@ -38,7 +38,7 @@ Or use `npm link` (see above) and run `tc` from anywhere.
 export TESTCOLLAB_TOKEN=your_api_token
 
 # Optional: point at a different API
-export API_URL=http://localhost:1337  # or use --api-url flag
+export TESTCOLLAB_API_URL=http://localhost:1337  # or use --api-url flag
 ```
 
 ## Project structure
