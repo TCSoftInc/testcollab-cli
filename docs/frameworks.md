@@ -345,6 +345,8 @@ tc report --project 123 --test-plan-id 456 \
   --format junit --result-file ./reports/results.xml
 ```
 
+**Feature files synced with `tc sync`?** Then your scenarios need no TestCollab ID in their name. Both formatters write the `Feature:` title as the `classname` and the `Scenario:` title as the test name, which is the pair `tc sync` stored — so `tc report` finds the synced case on its own. See [BDD: results from synced `.feature` files](../README.md#bdd-results-from-synced-feature-files) for the two cases that still need a marker.
+
 ---
 
 ## Cucumber JVM
@@ -369,6 +371,8 @@ cucumber.plugin=junit:target/cucumber-reports/results.xml
 tc report --project 123 --test-plan-id 456 \
   --format junit --result-file ./target/cucumber-reports/results.xml
 ```
+
+The plugin writes the `Feature:` title as the `classname` and the `Scenario:` title as the test name, so feature files synced with `tc sync` report back without a TestCollab ID — see [BDD: results from synced `.feature` files](../README.md#bdd-results-from-synced-feature-files).
 
 ---
 

@@ -412,6 +412,24 @@ A marker always wins over the trailing-number form, so `[TC-1730] ... and UTF-8`
 
 When using `--auto-create`, IDs are optional — tests without IDs are matched by title or created automatically.
 
+#### BDD: results from synced `.feature` files
+
+If your Gherkin feature files are synced into TestCollab with [`tc sync`](#tc-sync), your scenarios need **no ID at all**. A Cucumber report already names the feature and the scenario it ran, and that is the pair `tc sync` stored — the feature as a test suite, the scenario as a test case under it. `tc report` resolves a result with no ID marker against those cases:
+
+```xml
+<testcase classname="User login" name="Valid password signs in" />
+             ↑ the Feature: title        ↑ the Scenario: title
+```
+
+- Matching is limited to the suites and cases the sync owns, so a hand-written case that happens to share a title is never written to. Titles are compared without regard to case or extra spacing.
+- With `--auto-create`, a matched scenario is added to the generated plan as it is: nothing is tagged, no suite tree is copied, and no second case is created.
+- Nothing to configure. In a project with no synced features the lookup costs one request that finds nothing, and a lookup that fails only warns.
+
+Two things still need a marker, because their titles differ from what was synced:
+
+- **`Scenario Outline`** — Cucumber reports one result per `Examples:` row, with the placeholders filled in, while the synced case keeps the literal `<placeholder>` text.
+- A scenario **renamed in Git but not yet synced**. Run `tc sync` on the same commit that ran the tests, and the titles agree again.
+
 #### Configuration-specific runs
 
 If your test plan uses multiple configurations, include the config ID in your test names:
@@ -553,6 +571,8 @@ tc sync --project <id> [--api-key <key>] [--api-url <url>]
 3. Sends only the changes to TestCollab (creates, updates, renames, or deletes)
 
 Only **committed** files are synced. Uncommitted changes are ignored (with a warning).
+
+Once a feature is synced, the results of running it report straight back into the same test cases — no TestCollab ID in the `.feature` file. See [BDD: results from synced `.feature` files](#bdd-results-from-synced-feature-files).
 
 #### Example output
 
