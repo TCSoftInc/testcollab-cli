@@ -358,22 +358,70 @@ function extractBackgroundText(content) {
  *
  * The hashes do not use this. They stay on keyword + step line, so a case
  * synced before tables were sent keeps its hash and is not created again.
+ *
+ * TCV-6057: `parameters` are a Scenario Outline's Examples columns. Each
+ * <name> in the step line, a table cell or the doc string becomes {{name}},
+ * the reference TestCollab fills from the linked test dataset. It is replaced
+ * before escaping, so the HTML the step is wrapped in is never touched.
  */
-function formatStep(step) {
-  return `${step.keyword}${step.text}${formatStepArgument(step)}`;
+function formatStep(step, parameters = []) {
+  const withParameters = text => toDatasetReferences(text, parameters);
+  return `${step.keyword}${withParameters(step.text)}${formatStepArgument(step, withParameters)}`;
 }
 
-function formatStepArgument(step) {
+function formatStepArgument(step, withParameters) {
   if (step.dataTable) {
     const rows = step.dataTable.rows.map(row =>
-      `<tr>${row.cells.map(cell => `<td>${escapeStepHtml(cell.value)}</td>`).join('')}</tr>`
+      `<tr>${row.cells.map(cell => `<td>${escapeStepHtml(withParameters(cell.value))}</td>`).join('')}</tr>`
     );
     return `<table class="${DATA_TABLE_CLASS}"><tbody>${rows.join('')}</tbody></table>`;
   }
   if (step.docString) {
-    return `<pre class="${DOC_STRING_CLASS}">${escapeStepHtml(step.docString.content)}</pre>`;
+    return `<pre class="${DOC_STRING_CLASS}">${escapeStepHtml(withParameters(step.docString.content))}</pre>`;
   }
   return '';
+}
+
+// TCV-6057: Cucumber puts the Examples value where <name> is; TestCollab puts the dataset value where {{name}} is
+function toDatasetReferences(text, parameters) {
+  return parameters.reduce((result, name) => result.split(`<${name}>`).join(`{{${name}}}`), text);
+}
+
+/**
+ * TCV-6057: a Scenario Outline's Examples tables, as one table for a TestCollab
+ * test dataset. A test case holds one dataset, so every Examples block goes
+ * into it: the columns in the order they first appear, one row per example
+ * row, and an empty value where a block has no such column. Null when there
+ * is no column or no row, so a plain Scenario sends nothing.
+ */
+function extractExamples(scenario) {
+  const parameters = [];
+  const valuesByRow = [];
+  for (const block of scenario.examples || []) {
+    if (!block.tableHeader) {
+      continue;
+    }
+    const header = block.tableHeader.cells.map(cell => cell.value);
+    header.filter(Boolean).forEach(name => {
+      if (!parameters.includes(name)) {
+        parameters.push(name);
+      }
+    });
+    for (const row of block.tableBody || []) {
+      const values = new Map();
+      row.cells.forEach((cell, index) => {
+        values.set(header[index], cell.value);
+      });
+      valuesByRow.push(values);
+    }
+  }
+  if (parameters.length === 0 || valuesByRow.length === 0) {
+    return null;
+  }
+  return {
+    parameters,
+    rows: valuesByRow.map(values => parameters.map(name => (values.has(name) ? values.get(name) : '')))
+  };
 }
 
 // Cell and doc string text is shown as written, never read as markup.
@@ -421,14 +469,17 @@ function parseGherkinFile(content, filePath) {
           .map(tag => (tag.name || '').trim())
           .filter(Boolean)
           .map(tagName => (tagName.startsWith('@') ? tagName.slice(1) : tagName));
+        // TCV-6057: a Scenario Outline's Examples become a test dataset its steps reference
+        const examples = extractExamples(scenario);
         // TCV-7031: send the step's data table / doc string too; stepsText, the hash input, leaves them out
-        const normalizedSteps = steps.map(formatStep);
-        
+        const normalizedSteps = steps.map(step => formatStep(step, examples ? examples.parameters : []));
+
         scenarios.push({
           hash: calculateHash(stepsText, filePath),
           title: scenario.name,
           steps: normalizedSteps,
-          tags: scenarioTags
+          tags: scenarioTags,
+          examples
         });
       } else if (child.background) {
         // Background is in children, not directly on feature
@@ -452,7 +503,7 @@ function parseGherkinFile(content, filePath) {
         name: feature.name,
       FeatureDescription: featureDescription || '',
       // TCV-7031: a background table reaches every case of the feature
-      background: background ? background.steps.map(formatStep) : undefined,
+      background: background ? background.steps.map(step => formatStep(step)) : undefined,
       backgroundText: backgroundText && backgroundText.length > 0 ? backgroundText : undefined
       },
       featureHash: calculateHash(featureContent, filePath),
@@ -615,14 +666,19 @@ function buildSyncPayload(projectId, prevCommit, headCommit, changes, resolvedId
         
         if (shouldIncludeSteps) {
           payloadScenario.steps = scenario.steps;
+          // TCV-6057: the Examples table travels with the steps that reference it
+          if (scenario.examples) {
+            payloadScenario.examples = scenario.examples;
+          }
         }
-        
+
         if (DEBUG_BDD_SYNC) {
           console.log(`   • scenario[${index}] title="${scenario.title}"`);
           console.log(`     - prevHash: ${payloadScenario.prevHash || 'none'}`);
           console.log(`     - caseId: ${payloadScenario.caseId || 'none'}`);
           console.log(`     - newHash: ${payloadScenario.hash}`);
           console.log(`     - stepsIncluded: ${shouldIncludeSteps}`);
+          console.log(`     - examples: ${payloadScenario.examples ? payloadScenario.examples.rows.length + ' row(s)' : 'none'}`);
         }
         
         return payloadScenario;

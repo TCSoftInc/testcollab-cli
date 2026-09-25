@@ -574,6 +574,8 @@ Only **committed** files are synced. Uncommitted changes are ignored (with a war
 
 A step's data table or doc string is synced with the step: the table shows as a table and the text block as a preformatted block, under the step or expected result that line belongs to. A background table appears on every case of the feature. A case synced by an older CLI gets its tables the next time its `.feature` file changes.
 
+A `Scenario Outline` becomes one test case with a linked **test dataset** built from its `Examples:` table, so a test plan runs it once per example row. Each `<name>` in its steps becomes `{{name}}`, the value TestCollab fills in from the dataset. Several `Examples:` blocks go into one dataset. The dataset belongs to the sync: change the `Examples:` table in the `.feature` file, not the dataset in TestCollab, because the next sync of the scenario writes the table back. Test datasets need the Elite or Enterprise plan; on other plans the outline is synced without one and the sync reports a warning. An outline synced by an older CLI gets its dataset the next time its `.feature` file changes.
+
 Once a feature is synced, the results of running it report straight back into the same test cases — no TestCollab ID in the `.feature` file. See [BDD: results from synced `.feature` files](#bdd-results-from-synced-feature-files).
 
 #### Example output
