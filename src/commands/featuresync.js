@@ -644,7 +644,9 @@ async function resolveIds(projectId, hashes, apiUrl, token) {
     const results = responseData.results || {};
     return {
       suites: results.suites || {},
-      cases: results.cases || {}
+      cases: results.cases || {},
+      // TCV-7036: every live case of each hash; an older API does not send it
+      caseLists: results.caseLists
     };
   } catch (error) {
     throw new Error(`Failed to resolve IDs: ${error.message}`);
@@ -697,19 +699,11 @@ function buildSyncPayload(projectId, prevCommit, headCommit, changes, resolvedId
       }
     }
     
-    if (change.scenarios) {
-      // Build helper sets/maps for robust mapping
-      const oldHashesSet = new Set(change.oldScenarioHashes || []);
-      const oldScenarios = change.oldScenarios || [];
-      const oldTitleToHash = new Map(oldScenarios.map(s => [titleInRule(s), s.hash]));
-      // TCV-6912: a title that repeats under several rules is matched only in its own rule
-      const oldUniqueTitleToHash = new Map(
-        oldScenarios
-          .filter(s => oldScenarios.filter(other => other.title === s.title).length === 1)
-          .map(s => [s.title, s.hash])
-      );
-      const sameLengthAsOld = !!change.oldScenarioHashes && change.oldScenarioHashes.length === change.scenarios.length;
+    // TCV-7036: the old scenario each scenario continues, one to one, and each old scenario's case
+    const oldScenarios = change.oldScenarios || [];
+    const match = matchScenarios(change.scenarios || [], oldScenarios, resolvedIds);
 
+    if (change.scenarios) {
       payloadChange.scenarios = change.scenarios.map((scenario, index) => {
         const payloadScenario = {
           hash: scenario.hash,
@@ -725,38 +719,15 @@ function buildSyncPayload(projectId, prevCommit, headCommit, changes, resolvedId
           payloadScenario.rule = scenario.rule;
         }
         
-        // Determine prevHash robustly:
-        // 1) If steps unchanged, new hash equals some old hash → use that
-        if (oldHashesSet.has(scenario.hash)) {
-          payloadScenario.prevHash = scenario.hash;
-          if (DEBUG_BDD_SYNC) {
-            console.log(`     · mapping by steps-hash equality`);
+        // The old scenario this one continues (see matchScenarios), and its case
+        const oldIndex = match.oldIndexOf[index];
+        if (oldIndex !== -1) {
+          payloadScenario.prevHash = oldScenarios[oldIndex].hash;
+          if (match.caseIds[oldIndex]) {
+            payloadScenario.caseId = match.caseIds[oldIndex];
           }
-        } else if (oldTitleToHash.has(titleInRule(scenario))) {
-          // 2) Title unchanged → use old hash by title
-          payloadScenario.prevHash = oldTitleToHash.get(titleInRule(scenario));
           if (DEBUG_BDD_SYNC) {
-            console.log(`     · mapping by title match`);
-          }
-        } else if (oldUniqueTitleToHash.has(scenario.title)) {
-          // TCV-6912: moved to another rule and edited → use old hash by title, when no other scenario had it
-          payloadScenario.prevHash = oldUniqueTitleToHash.get(scenario.title);
-          if (DEBUG_BDD_SYNC) {
-            console.log(`     · mapping by title match across rules`);
-          }
-        } else if (sameLengthAsOld && change.oldScenarioHashes && change.oldScenarioHashes[index]) {
-          // 3) Fallback: index mapping only when counts are equal
-          payloadScenario.prevHash = change.oldScenarioHashes[index];
-          if (DEBUG_BDD_SYNC) {
-            console.log(`     · mapping by index fallback`);
-          }
-        }
-        
-        // Add caseId if this is an update to existing scenario (use prevHash to look up)
-        if (payloadScenario.prevHash) {
-          const caseInfo = resolvedIds.cases[payloadScenario.prevHash];
-          if (caseInfo && caseInfo.caseId) {
-            payloadScenario.caseId = caseInfo.caseId;
+            console.log(`     · mapping by ${match.reasons[index]}`);
           }
         }
         
@@ -793,18 +764,31 @@ function buildSyncPayload(projectId, prevCommit, headCommit, changes, resolvedId
     }
     
     // Include deleted scenarios (present before, missing now)
-    if (change.oldScenarioHashes && change.oldScenarioHashes.length > 0 && change.status !== 'A') {
+    // TCV-7036: an old scenario that no scenario continues. It goes with its case id, because
+    // a hash can stand for several cases. Without one, only when no remaining scenario has
+    // its hash, as before; and never with the case id a remaining scenario sends, which an
+    // API without caseLists gives to every scenario of a shared hash.
+    if (oldScenarios.length > 0 && change.status !== 'A') {
       const existingScenarios = payloadChange.scenarios || [];
       const newHashes = new Set(existingScenarios.map(s => s.hash).filter(Boolean));
       const newPrevHashes = new Set(existingScenarios.map(s => s.prevHash).filter(Boolean));
-      for (const oldHash of change.oldScenarioHashes) {
-        if (!newHashes.has(oldHash) && !newPrevHashes.has(oldHash)) {
-          existingScenarios.push({ prevHash: oldHash, deleted: true });
-          if (DEBUG_BDD_SYNC) {
-            console.log(`   • scenario deleted: prevHash ${oldHash}`);
-          }
+      const newCaseIds = new Set(existingScenarios.map(s => s.caseId).filter(Boolean));
+      oldScenarios.forEach((old, oldIndex) => {
+        if (match.continued.has(oldIndex)) {
+          return;
         }
-      }
+        const caseId = match.caseIds[oldIndex];
+        if (caseId && !newCaseIds.has(caseId)) {
+          existingScenarios.push({ prevHash: old.hash, caseId, deleted: true });
+        } else if (!caseId && !newHashes.has(old.hash) && !newPrevHashes.has(old.hash)) {
+          existingScenarios.push({ prevHash: old.hash, deleted: true });
+        } else {
+          return;
+        }
+        if (DEBUG_BDD_SYNC) {
+          console.log(`   • scenario deleted: prevHash ${old.hash}${caseId ? `, caseId ${caseId}` : ''}`);
+        }
+      });
       if (existingScenarios.length > 0) {
         payloadChange.scenarios = existingScenarios;
         if (DEBUG_BDD_SYNC) {
@@ -832,6 +816,88 @@ function buildSyncPayload(projectId, prevCommit, headCommit, changes, resolvedId
 // because the same example title often repeats under several rules of one file.
 function titleInRule(scenario) {
   return scenario.rule ? `${scenario.rule.title}\n${scenario.title}` : scenario.title;
+}
+
+/**
+ * TCV-7036: which old scenario each scenario of the new file continues, and the test case
+ * of each old scenario. The hash is the file path and the step lines, so scenarios with
+ * the same steps share it: a match is one to one, never two scenarios on one old scenario.
+ * Each pass goes over the scenarios still unmatched, in file order, from the strongest
+ * sign to the weakest: the same steps and title, the same steps, the same title, the same
+ * title under another rule when only one old scenario has it (TCV-6912), and the same
+ * position when the file has as many scenarios as before.
+ */
+function matchScenarios(scenarios, oldScenarios, resolvedIds) {
+  const oldIndexOf = scenarios.map(() => -1);
+  const reasons = scenarios.map(() => null);
+  const continued = new Set();
+  const pass = (reason, fits) => {
+    scenarios.forEach((scenario, index) => {
+      if (oldIndexOf[index] !== -1) {
+        return;
+      }
+      const oldIndex = oldScenarios.findIndex((old, i) => !continued.has(i) && fits(scenario, old, index, i));
+      if (oldIndex !== -1) {
+        oldIndexOf[index] = oldIndex;
+        reasons[index] = reason;
+        continued.add(oldIndex);
+      }
+    });
+  };
+  const oldTitleCount = title => oldScenarios.filter(old => old.title === title).length;
+
+  pass('steps-hash and title equality', (s, old) => s.hash === old.hash && titleInRule(s) === titleInRule(old));
+  pass('steps-hash equality', (s, old) => s.hash === old.hash);
+  pass('title match', (s, old) => titleInRule(s) === titleInRule(old));
+  pass('title match across rules', (s, old) => s.title === old.title && oldTitleCount(old.title) === 1);
+  if (scenarios.length === oldScenarios.length) {
+    pass('index fallback', (s, old, index, oldIndex) => index === oldIndex);
+  }
+
+  return { oldIndexOf, reasons, continued, caseIds: caseOfEachOldScenario(oldScenarios, resolvedIds) };
+}
+
+/**
+ * TCV-7036: the test case of each old scenario. A hash that one old scenario has gets the
+ * case resolve-ids names for it, as before. Old scenarios that share a hash share out the
+ * live cases the API lists for it (caseLists): first each takes the oldest free case with
+ * its title, then the rest take the oldest free cases in file order, so scenarios with the
+ * same steps and title keep the cases of their order. An API without caseLists names one
+ * case per hash, which then stands for all of them, as before.
+ */
+function caseOfEachOldScenario(oldScenarios, resolvedIds) {
+  const caseIds = oldScenarios.map(old => {
+    const caseInfo = resolvedIds.cases[old.hash];
+    return caseInfo && caseInfo.caseId ? caseInfo.caseId : undefined;
+  });
+  const caseLists = resolvedIds.caseLists || {};
+  const indexesByHash = new Map();
+  oldScenarios.forEach((old, index) => {
+    indexesByHash.set(old.hash, (indexesByHash.get(old.hash) || []).concat([index]));
+  });
+
+  indexesByHash.forEach((indexes, hash) => {
+    if (indexes.length < 2 || !Array.isArray(caseLists[hash])) {
+      return;
+    }
+    const free = caseLists[hash].slice();
+    const shared = new Map();
+    indexes.forEach(index => {
+      const at = free.findIndex(entry => entry.title === oldScenarios[index].title);
+      if (at !== -1) {
+        shared.set(index, free.splice(at, 1)[0].caseId);
+      }
+    });
+    indexes.forEach(index => {
+      if (!shared.has(index) && free.length > 0) {
+        shared.set(index, free.shift().caseId);
+      }
+    });
+    indexes.forEach(index => {
+      caseIds[index] = shared.get(index);
+    });
+  });
+  return caseIds;
 }
 
 /**

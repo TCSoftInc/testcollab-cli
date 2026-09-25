@@ -98,9 +98,11 @@ export function mockEmptyResolveIds() {
  * Mock the resolve-ids API call with existing items
  * @param {Object} suites - Suite hash to ID mapping
  * @param {Object} cases - Test case hash to ID mapping
+ * @param {Object} [caseLists] - TCV-7036: hash to every live case, [{ caseId, title }], oldest
+ *   first. Left out, the answer is the one of an API from before caseLists.
  * @returns {Object} Mock response with resolved IDs
  */
-export function mockResolveIds(suites = {}, cases = {}) {
+export function mockResolveIds(suites = {}, cases = {}, caseLists) {
   // Normalise responses to match real API shape from tc-api/api/bdd/controllers/Bdd.js
   // - suites map: { <hash>: { suiteId, title? } }
   // - cases map:  { <hash>: { caseId, title?, suiteId? } }
@@ -134,12 +136,17 @@ export function mockResolveIds(suites = {}, cases = {}) {
   const normalisedSuites = normaliseEntries(suites, 'suite');
   const normalisedCases = normaliseEntries(cases, 'case');
 
+  const results = {
+    suites: normalisedSuites,
+    cases: normalisedCases
+  };
+  if (caseLists) {
+    results.caseLists = caseLists;
+  }
+
   return createApiResponse({
     success: true,
-    results: {
-      suites: normalisedSuites,
-      cases: normalisedCases
-    }
+    results
   });
 }
 
