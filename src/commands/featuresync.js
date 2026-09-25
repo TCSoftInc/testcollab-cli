@@ -22,6 +22,11 @@ import fs from 'fs';
 // Enable extra debug logs by setting BDD_SYNC_DEBUG=1
 const DEBUG_BDD_SYNC = process.env.BDD_SYNC_DEBUG === '1';
 
+// TCV-7031: the TestCollab step view styles a synced data table and doc string
+// by these class names.
+const DATA_TABLE_CLASS = 'bdd-data-table';
+const DOC_STRING_CLASS = 'bdd-doc-string';
+
 /**
  * Main featuresync command handler
  * @param {Object} options - Command options from commander
@@ -346,6 +351,41 @@ function extractBackgroundText(content) {
 }
 
 /**
+ * TCV-7031: a step as it is sent to TestCollab — the keyword and step line,
+ * followed by the step's data table or doc string. The API sorts steps from
+ * expected results line by line, so everything a step carries stays on its
+ * one line: rows become HTML table rows and line breaks become <br>.
+ *
+ * The hashes do not use this. They stay on keyword + step line, so a case
+ * synced before tables were sent keeps its hash and is not created again.
+ */
+function formatStep(step) {
+  return `${step.keyword}${step.text}${formatStepArgument(step)}`;
+}
+
+function formatStepArgument(step) {
+  if (step.dataTable) {
+    const rows = step.dataTable.rows.map(row =>
+      `<tr>${row.cells.map(cell => `<td>${escapeStepHtml(cell.value)}</td>`).join('')}</tr>`
+    );
+    return `<table class="${DATA_TABLE_CLASS}"><tbody>${rows.join('')}</tbody></table>`;
+  }
+  if (step.docString) {
+    return `<pre class="${DOC_STRING_CLASS}">${escapeStepHtml(step.docString.content)}</pre>`;
+  }
+  return '';
+}
+
+// Cell and doc string text is shown as written, never read as markup.
+function escapeStepHtml(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\r\n|\r|\n/g, '<br>');
+}
+
+/**
  * Parse a Gherkin file and extract structured data
  */
 function parseGherkinFile(content, filePath) {
@@ -381,7 +421,8 @@ function parseGherkinFile(content, filePath) {
           .map(tag => (tag.name || '').trim())
           .filter(Boolean)
           .map(tagName => (tagName.startsWith('@') ? tagName.slice(1) : tagName));
-        const normalizedSteps = steps.map(step => `${step.keyword}${step.text}`);
+        // TCV-7031: send the step's data table / doc string too; stepsText, the hash input, leaves them out
+        const normalizedSteps = steps.map(formatStep);
         
         scenarios.push({
           hash: calculateHash(stepsText, filePath),
@@ -410,7 +451,8 @@ function parseGherkinFile(content, filePath) {
       feature: {
         name: feature.name,
       FeatureDescription: featureDescription || '',
-      background: background ? background.steps.map(step => `${step.keyword}${step.text}`) : undefined,
+      // TCV-7031: a background table reaches every case of the feature
+      background: background ? background.steps.map(formatStep) : undefined,
       backgroundText: backgroundText && backgroundText.length > 0 ? backgroundText : undefined
       },
       featureHash: calculateHash(featureContent, filePath),

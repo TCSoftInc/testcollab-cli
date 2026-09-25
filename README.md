@@ -572,6 +572,8 @@ tc sync --project <id> [--api-key <key>] [--api-url <url>]
 
 Only **committed** files are synced. Uncommitted changes are ignored (with a warning).
 
+A step's data table or doc string is synced with the step: the table shows as a table and the text block as a preformatted block, under the step or expected result that line belongs to. A background table appears on every case of the feature. A case synced by an older CLI gets its tables the next time its `.feature` file changes.
+
 Once a feature is synced, the results of running it report straight back into the same test cases — no TestCollab ID in the `.feature` file. See [BDD: results from synced `.feature` files](#bdd-results-from-synced-feature-files).
 
 #### Example output
