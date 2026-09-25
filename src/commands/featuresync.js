@@ -457,16 +457,17 @@ function parseGherkinFile(content, filePath) {
     // TCV-6912: scenarios written under a Rule: heading
     const ruleScenarios = [];
 
-    // TCV-6912: the feature's own text ends where its first Rule: starts. The line-based
-    // extractors below would otherwise read the rule into the feature description and
-    // the feature background text.
-    const firstRule = (feature.children || []).find(child => child.rule);
-    const contentBeforeRules = firstRule ? linesBetween(content, 1, firstLineOf(firstRule.rule)) : content;
+    // TCV-6912 / TCV-6202: the line-based extractors below read on to the next Scenario:
+    // heading, so they took in what is written above it: a rule, and the first scenario's
+    // tags, which became part of the feature description or of the background text the
+    // server writes as the case description. So each one gets only its own block, which
+    // ends where the next child starts, tags included. A background is always the first child.
+    const [firstChild, secondChild] = feature.children || [];
+    const featureDescription = extractFeatureDescription(linesBetween(content, 1, startOfChild(content, firstChild)));
+    const backgroundText = firstChild && firstChild.background
+      ? extractBackgroundText(linesBetween(content, firstChild.background.location.line, startOfChild(content, secondChild)))
+      : [];
 
-    // Extract feature description text that appears between Feature: and Background/Scenario
-    const featureDescription = extractFeatureDescription(contentBeforeRules);
-  const backgroundText = extractBackgroundText(contentBeforeRules);
-    
     // Process children to find scenarios and background
     for (const child of feature.children || []) {
       if (child.scenario) {
@@ -480,10 +481,11 @@ function parseGherkinFile(content, filePath) {
     }
     
     // Calculate feature hash based on description + background + all scenario steps
-    // TCV-6912: for a file with rules this stays what older CLIs hashed, the whole-file
-    // description and the top-level scenarios only. The suite they created is found by
-    // that hash, so changing it would lose the suite on the next sync.
-    const hashedDescription = firstRule ? extractFeatureDescription(content) : featureDescription;
+    // TCV-6912 / TCV-6202: this stays what older CLIs hashed, the whole-file description
+    // (with the rule or scenario tags it read on into) and the top-level scenarios only.
+    // The suite they created is found by that hash, so changing it would lose the suite
+    // on the next sync.
+    const hashedDescription = extractFeatureDescription(content);
     let featureContent = '';
     if (hashedDescription) {
       featureContent += hashedDescription + '\n';
@@ -592,6 +594,15 @@ function parseRule(rule, content, filePath) {
 // TCV-6912: the line a rule or scenario starts on, counting the tags written above it
 function firstLineOf(node) {
   return Math.min(node.location.line, ...(node.tags || []).map(tag => tag.location.line));
+}
+
+// TCV-6202: the line a feature child (background, scenario or rule) starts on, counting its
+// tags; the line after the last one when there is no such child
+function startOfChild(content, child) {
+  if (!child) {
+    return content.split('\n').length + 1;
+  }
+  return firstLineOf(child.background || child.scenario || child.rule);
 }
 
 // TCV-6912: lines fromLine up to, not including, toLine; numbered from 1 as Gherkin does
