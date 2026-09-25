@@ -454,43 +454,39 @@ function parseGherkinFile(content, filePath) {
     const feature = gherkinDocument.feature;
     const scenarios = [];
     let background = null;
-    
+    // TCV-6912: scenarios written under a Rule: heading
+    const ruleScenarios = [];
+
+    // TCV-6912: the feature's own text ends where its first Rule: starts. The line-based
+    // extractors below would otherwise read the rule into the feature description and
+    // the feature background text.
+    const firstRule = (feature.children || []).find(child => child.rule);
+    const contentBeforeRules = firstRule ? linesBetween(content, 1, firstLineOf(firstRule.rule)) : content;
+
     // Extract feature description text that appears between Feature: and Background/Scenario
-    const featureDescription = extractFeatureDescription(content);
-  const backgroundText = extractBackgroundText(content);
+    const featureDescription = extractFeatureDescription(contentBeforeRules);
+  const backgroundText = extractBackgroundText(contentBeforeRules);
     
     // Process children to find scenarios and background
     for (const child of feature.children || []) {
       if (child.scenario) {
-        const scenario = child.scenario;
-        const steps = scenario.steps || [];
-        const stepsText = steps.map(step => `${step.keyword}${step.text}`).join('\n');
-        const scenarioTags = (scenario.tags || [])
-          .map(tag => (tag.name || '').trim())
-          .filter(Boolean)
-          .map(tagName => (tagName.startsWith('@') ? tagName.slice(1) : tagName));
-        // TCV-6057: a Scenario Outline's Examples become a test dataset its steps reference
-        const examples = extractExamples(scenario);
-        // TCV-7031: send the step's data table / doc string too; stepsText, the hash input, leaves them out
-        const normalizedSteps = steps.map(step => formatStep(step, examples ? examples.parameters : []));
-
-        scenarios.push({
-          hash: calculateHash(stepsText, filePath),
-          title: scenario.name,
-          steps: normalizedSteps,
-          tags: scenarioTags,
-          examples
-        });
+        scenarios.push(toSyncScenario(child.scenario, filePath));
       } else if (child.background) {
         // Background is in children, not directly on feature
         background = child.background;
+      } else if (child.rule) {
+        ruleScenarios.push(...parseRule(child.rule, content, filePath));
       }
     }
     
     // Calculate feature hash based on description + background + all scenario steps
+    // TCV-6912: for a file with rules this stays what older CLIs hashed, the whole-file
+    // description and the top-level scenarios only. The suite they created is found by
+    // that hash, so changing it would lose the suite on the next sync.
+    const hashedDescription = firstRule ? extractFeatureDescription(content) : featureDescription;
     let featureContent = '';
-    if (featureDescription) {
-      featureContent += featureDescription + '\n';
+    if (hashedDescription) {
+      featureContent += hashedDescription + '\n';
     }
     if (background) {
       const bgSteps = background.steps || [];
@@ -507,11 +503,98 @@ function parseGherkinFile(content, filePath) {
       backgroundText: backgroundText && backgroundText.length > 0 ? backgroundText : undefined
       },
       featureHash: calculateHash(featureContent, filePath),
-      scenarios
+      scenarios: scenarios.concat(ruleScenarios)
     };
   } catch (error) {
     throw new Error(`Failed to parse Gherkin file: ${error.message}`);
   }
+}
+
+/**
+ * A scenario as it is sent to TestCollab. TCV-6912: top-level scenarios and scenarios
+ * under a Rule: both go through here, so a Scenario Outline is read the same way in both.
+ */
+function toSyncScenario(scenario, filePath) {
+  const steps = scenario.steps || [];
+  const stepsText = steps.map(step => `${step.keyword}${step.text}`).join('\n');
+  // TCV-6057: a Scenario Outline's Examples become a test dataset its steps reference
+  const examples = extractExamples(scenario);
+  // TCV-7031: send the step's data table / doc string too; stepsText, the hash input, leaves them out
+  const normalizedSteps = steps.map(step => formatStep(step, examples ? examples.parameters : []));
+
+  return {
+    hash: calculateHash(stepsText, filePath),
+    title: scenario.name,
+    steps: normalizedSteps,
+    tags: tagNames(scenario.tags),
+    examples
+  };
+}
+
+function tagNames(tags) {
+  return (tags || [])
+    .map(tag => (tag.name || '').trim())
+    .filter(Boolean)
+    .map(tagName => (tagName.startsWith('@') ? tagName.slice(1) : tagName));
+}
+
+/**
+ * TCV-6912: the scenarios under a Rule: heading. A rule creates no suite, so its
+ * scenarios sync into the feature suite like any other scenario. The rule's background
+ * steps go ahead of each scenario's own steps (the server puts the feature background
+ * ahead of both), and the rule's tags ahead of its own tags, as Cucumber inherits them.
+ *
+ * The rule itself travels in `rule`, from which the server writes the case description.
+ * The hash stays on the scenario's own steps, so a scenario moved to another rule of the
+ * same file updates its case.
+ */
+function parseRule(rule, content, filePath) {
+  let background = null;
+  const scenarios = [];
+  for (const child of rule.children || []) {
+    if (child.background) {
+      background = child.background;
+    } else if (child.scenario) {
+      scenarios.push(child.scenario);
+    }
+  }
+  if (scenarios.length === 0) {
+    return [];
+  }
+
+  const syncRule = { title: rule.name };
+  if (background) {
+    // Read like the feature background text: the lines of the block, up to the first scenario
+    const backgroundText = extractBackgroundText(
+      linesBetween(content, background.location.line, firstLineOf(scenarios[0]))
+    );
+    if (backgroundText.length > 0) {
+      syncRule.backgroundText = backgroundText;
+    }
+  }
+  // Not rewritten for an outline's Examples, like the feature background (TCV-6057)
+  const backgroundSteps = background ? background.steps.map(step => formatStep(step)) : [];
+  const ruleTags = tagNames(rule.tags);
+
+  return scenarios.map(scenario => {
+    const synced = toSyncScenario(scenario, filePath);
+    return {
+      ...synced,
+      steps: backgroundSteps.concat(synced.steps),
+      tags: ruleTags.concat(synced.tags),
+      rule: syncRule
+    };
+  });
+}
+
+// TCV-6912: the line a rule or scenario starts on, counting the tags written above it
+function firstLineOf(node) {
+  return Math.min(node.location.line, ...(node.tags || []).map(tag => tag.location.line));
+}
+
+// TCV-6912: lines fromLine up to, not including, toLine; numbered from 1 as Gherkin does
+function linesBetween(content, fromLine, toLine) {
+  return content.split('\n').slice(fromLine - 1, toLine - 1).join('\n');
 }
 
 /**
@@ -615,7 +698,14 @@ function buildSyncPayload(projectId, prevCommit, headCommit, changes, resolvedId
     if (change.scenarios) {
       // Build helper sets/maps for robust mapping
       const oldHashesSet = new Set(change.oldScenarioHashes || []);
-      const oldTitleToHash = new Map((change.oldScenarios || []).map(s => [s.title, s.hash]));
+      const oldScenarios = change.oldScenarios || [];
+      const oldTitleToHash = new Map(oldScenarios.map(s => [titleInRule(s), s.hash]));
+      // TCV-6912: a title that repeats under several rules is matched only in its own rule
+      const oldUniqueTitleToHash = new Map(
+        oldScenarios
+          .filter(s => oldScenarios.filter(other => other.title === s.title).length === 1)
+          .map(s => [s.title, s.hash])
+      );
       const sameLengthAsOld = !!change.oldScenarioHashes && change.oldScenarioHashes.length === change.scenarios.length;
 
       payloadChange.scenarios = change.scenarios.map((scenario, index) => {
@@ -628,6 +718,11 @@ function buildSyncPayload(projectId, prevCommit, headCommit, changes, resolvedId
           payloadScenario.tags = scenario.tags;
         }
         
+        // TCV-6912: the rule the scenario sits under, for its case description
+        if (scenario.rule) {
+          payloadScenario.rule = scenario.rule;
+        }
+        
         // Determine prevHash robustly:
         // 1) If steps unchanged, new hash equals some old hash → use that
         if (oldHashesSet.has(scenario.hash)) {
@@ -635,11 +730,17 @@ function buildSyncPayload(projectId, prevCommit, headCommit, changes, resolvedId
           if (DEBUG_BDD_SYNC) {
             console.log(`     · mapping by steps-hash equality`);
           }
-        } else if (oldTitleToHash.has(scenario.title)) {
+        } else if (oldTitleToHash.has(titleInRule(scenario))) {
           // 2) Title unchanged → use old hash by title
-          payloadScenario.prevHash = oldTitleToHash.get(scenario.title);
+          payloadScenario.prevHash = oldTitleToHash.get(titleInRule(scenario));
           if (DEBUG_BDD_SYNC) {
             console.log(`     · mapping by title match`);
+          }
+        } else if (oldUniqueTitleToHash.has(scenario.title)) {
+          // TCV-6912: moved to another rule and edited → use old hash by title, when no other scenario had it
+          payloadScenario.prevHash = oldUniqueTitleToHash.get(scenario.title);
+          if (DEBUG_BDD_SYNC) {
+            console.log(`     · mapping by title match across rules`);
           }
         } else if (sameLengthAsOld && change.oldScenarioHashes && change.oldScenarioHashes[index]) {
           // 3) Fallback: index mapping only when counts are equal
@@ -723,6 +824,12 @@ function buildSyncPayload(projectId, prevCommit, headCommit, changes, resolvedId
   }
   
   return payload;
+}
+
+// TCV-6912: the title a scenario is matched by. Under a rule it includes the rule title,
+// because the same example title often repeats under several rules of one file.
+function titleInRule(scenario) {
+  return scenario.rule ? `${scenario.rule.title}\n${scenario.title}` : scenario.title;
 }
 
 /**
