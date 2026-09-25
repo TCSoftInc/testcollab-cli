@@ -871,40 +871,42 @@ async function syncWithTestCollab(payload, apiUrl, token) {
  * Display sync results to the user
  */
 function displaySyncResults(result) {
+  // TCV-7029: the API answers { success, message, results }; the counts and warnings are in results
+  const counts = result.results || {};
   console.log('\n📊 Synchronization Results:');
   
-  if (result.createdSuites > 0) {
-    console.log(`✨ Created ${result.createdSuites} suite(s)`);
+  if (counts.createdSuites > 0) {
+    console.log(`✨ Created ${counts.createdSuites} suite(s)`);
   }
-  if (result.createdCases > 0) {
-    console.log(`✨ Created ${result.createdCases} test case(s)`);
+  if (counts.createdCases > 0) {
+    console.log(`✨ Created ${counts.createdCases} test case(s)`);
   }
-  if (result.renamedSuites > 0) {
-    console.log(`🔄 Renamed ${result.renamedSuites} suite(s)`);
+  if (counts.renamedSuites > 0) {
+    console.log(`🔄 Renamed ${counts.renamedSuites} suite(s)`);
   }
-  if (result.renamedCases > 0) {
-    console.log(`🔄 Renamed ${result.renamedCases} test case(s)`);
+  if (counts.renamedCases > 0) {
+    console.log(`🔄 Renamed ${counts.renamedCases} test case(s)`);
   }
-  if (result.updatedCases > 0) {
-    console.log(`🔄 Updated ${result.updatedCases} test case(s)`);
+  if (counts.updatedCases > 0) {
+    console.log(`🔄 Updated ${counts.updatedCases} test case(s)`);
   }
-  if (result.deletedSuites > 0) {
-    console.log(`🗑️  Deleted ${result.deletedSuites} suite(s)`);
+  if (counts.deletedSuites > 0) {
+    console.log(`🗑️  Deleted ${counts.deletedSuites} suite(s)`);
   }
-  if (result.deletedCases > 0) {
-    console.log(`🗑️  Deleted ${result.deletedCases} test case(s)`);
+  if (counts.deletedCases > 0) {
+    console.log(`🗑️  Deleted ${counts.deletedCases} test case(s)`);
   }
   
-  if (result.warnings && result.warnings.length > 0) {
+  if (counts.warnings && counts.warnings.length > 0) {
     console.log('\n⚠️  Warnings:');
-    result.warnings.forEach(warning => console.log(`   ${warning}`));
+    counts.warnings.forEach(warning => console.log(`   ${warning}`));
   }
   
   // Show if no changes were made
-  const totalChanges = (result.createdSuites || 0) + (result.createdCases || 0) + 
-                      (result.renamedSuites || 0) + (result.renamedCases || 0) + 
-                      (result.updatedCases || 0) + (result.deletedSuites || 0) + 
-                      (result.deletedCases || 0);
+  const totalChanges = (counts.createdSuites || 0) + (counts.createdCases || 0) + 
+                      (counts.renamedSuites || 0) + (counts.renamedCases || 0) + 
+                      (counts.updatedCases || 0) + (counts.deletedSuites || 0) + 
+                      (counts.deletedCases || 0);
   
   if (totalChanges === 0) {
     console.log('ℹ️  No changes were required - everything is already in sync');
