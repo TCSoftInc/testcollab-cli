@@ -568,13 +568,15 @@ tc sync --project <id> [--api-key <key>] [--api-url <url>]
 
 1. Detects which `.feature` files changed since the last sync (using `git diff`)
 2. Parses the Gherkin and calculates content hashes
-3. Sends only the changes to TestCollab (creates, updates, renames, or deletes)
+3. Sends only the changes to TestCollab (creates, updates, renames, archives or restores)
 
 Only **committed** files are synced. Uncommitted changes are ignored (with a warning).
 
 A step's data table or doc string is synced with the step: the table shows as a table and the text block as a preformatted block, under the step or expected result that line belongs to. A background table appears on every case of the feature. A case synced by an older CLI gets its tables the next time its `.feature` file changes.
 
 A `Scenario Outline` becomes one test case with a linked **test dataset** built from its `Examples:` table, so a test plan runs it once per example row. Each `<name>` in its title and steps becomes `{{name}}`, and a test run fills the steps in from the dataset row. Several `Examples:` blocks go into one dataset. The dataset belongs to the sync: change the `Examples:` table in the `.feature` file, not the dataset in TestCollab, because the next sync of the scenario writes the table back. Test datasets need the Elite or Enterprise plan; on other plans the outline is synced without one and the sync reports a warning. An outline synced by an older CLI gets its dataset the next time its `.feature` file changes.
+
+A scenario removed from its `.feature` file archives its test case instead of deleting it. The case leaves the test case list and cannot be added to a new test plan, but it keeps its revisions, runs and results, and TestCollab marks it **Removed from repository**. A deleted `.feature` file archives the cases of all its scenarios, and its suite stays to hold them. When a scenario comes back with the same steps in the same file, the next sync restores the same test case instead of creating a new one; this also works for a deleted file that comes back. A scenario that comes back with other steps is a new scenario and gets a new test case. The repository owns these cases, so they cannot be restored or deleted by hand.
 
 Scenarios under a `Rule:` heading sync into the feature's suite like any other scenario; a rule adds no suite. Their steps start with the feature background, then the rule's background. They inherit the rule's tags, and their description names the rule (`Rule: <rule text>`). A feature synced by an older CLI gets its rule scenarios the next time its `.feature` file changes.
 

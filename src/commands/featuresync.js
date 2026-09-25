@@ -898,6 +898,13 @@ function displaySyncResults(result) {
   if (counts.deletedCases > 0) {
     console.log(`🗑️  Deleted ${counts.deletedCases} test case(s)`);
   }
+  // TCV-7034: a removed scenario archives its test case, and one that comes back restores it
+  if (counts.archivedCases > 0) {
+    console.log(`🗄️  Archived ${counts.archivedCases} test case(s) whose scenario was removed`);
+  }
+  if (counts.restoredCases > 0) {
+    console.log(`♻️  Restored ${counts.restoredCases} archived test case(s) whose scenario is back`);
+  }
   
   if (counts.warnings && counts.warnings.length > 0) {
     console.log('\n⚠️  Warnings:');
@@ -908,7 +915,8 @@ function displaySyncResults(result) {
   const totalChanges = (counts.createdSuites || 0) + (counts.createdCases || 0) + 
                       (counts.renamedSuites || 0) + (counts.renamedCases || 0) + 
                       (counts.updatedCases || 0) + (counts.deletedSuites || 0) + 
-                      (counts.deletedCases || 0);
+                      (counts.deletedCases || 0) + (counts.archivedCases || 0) + 
+                      (counts.restoredCases || 0);
   
   if (totalChanges === 0) {
     console.log('ℹ️  No changes were required - everything is already in sync');

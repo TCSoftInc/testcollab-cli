@@ -94,6 +94,15 @@ describe('TCV-7029: the sync summary', () => {
     const printed = await syncAndPrint({ createdSuites: 0, createdCases: 0 });
 
     expect(printed).toContain(NO_CHANGES);
-    expect(printed.filter(line => /^(✨|🔄|🗑️)/.test(line))).toEqual([]);
+    expect(printed.filter(line => /^(✨|🔄|🗑️|🗄️|♻️)/.test(line))).toEqual([]);
+  });
+
+  // TCV-7034: a removed scenario archives its test case, and one that comes back restores it
+  test('archived and restored test cases are printed, and count as changes', async () => {
+    const printed = await syncAndPrint({ createdSuites: 0, createdCases: 0, archivedCases: 2, restoredCases: 1 });
+
+    expect(printed).toContain('🗄️  Archived 2 test case(s) whose scenario was removed');
+    expect(printed).toContain('♻️  Restored 1 archived test case(s) whose scenario is back');
+    expect(printed).not.toContain(NO_CHANGES);
   });
 });
