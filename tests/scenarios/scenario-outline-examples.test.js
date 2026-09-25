@@ -152,8 +152,9 @@ describe('TCV-6057: Scenario Outline Examples', () => {
       'When I search the {{field}} for "{{term}}"',
       'Then I see {{count}} results'
     ]);
-    // The title keeps its placeholder: it is how the sync and CI results find the case again
-    expect(scenario.title).toBe('Search by <field>');
+    // The title too: the server strips anything tag-like from a new case's title,
+    // so "Search by <field>" would be stored as "Search by "
+    expect(scenario.title).toBe('Search by {{field}}');
   });
 
   test('a placeholder in a step table or doc string is replaced too, and the HTML around it is not', async () => {
@@ -184,6 +185,7 @@ describe('TCV-6057: Scenario Outline Examples', () => {
       'Then I see the welcome text<pre class="bdd-doc-string">Welcome {{name}}, you are a {{td}}.</pre>'
     ]);
     expect(scenario.examples).toEqual({ parameters: ['name', 'td'], rows: [['Aslak', 'admin']] });
+    expect(scenario.title).toBe('Import a {{td}} user');
   });
 
   test('only Examples columns are replaced; other angle brackets stay as written', async () => {
@@ -200,6 +202,7 @@ describe('TCV-6057: Scenario Outline Examples', () => {
 `);
 
     const [scenario] = change.scenarios;
+    expect(scenario.title).toBe('One column');
     expect(scenario.steps).toEqual([
       'When I type {{text}} into <field>',
       'Then the cell shows:<table class="bdd-data-table"><tbody><tr><td>&lt;other&gt;</td></tr></tbody></table>'

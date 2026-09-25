@@ -524,7 +524,9 @@ function toSyncScenario(scenario, filePath) {
 
   return {
     hash: calculateHash(stepsText, filePath),
-    title: scenario.name,
+    // TCV-6057: the title's <name> too. The server strips anything tag-like from a new
+    // case's title, so "Return after <days> days" would be stored as "Return after  days".
+    title: examples ? toDatasetReferences(scenario.name, examples.parameters) : scenario.name,
     steps: normalizedSteps,
     tags: tagNames(scenario.tags),
     examples
