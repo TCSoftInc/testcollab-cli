@@ -456,6 +456,8 @@ function parseGherkinFile(content, filePath) {
     let background = null;
     // TCV-6912: scenarios written under a Rule: heading
     const ruleScenarios = [];
+    // TCV-7053: Cucumber applies Feature tags to every scenario in the file.
+    const featureTags = tagNames(feature.tags);
 
     // TCV-6912 / TCV-6202: the line-based extractors below read on to the next Scenario:
     // heading, so they took in what is written above it: a rule, and the first scenario's
@@ -471,12 +473,12 @@ function parseGherkinFile(content, filePath) {
     // Process children to find scenarios and background
     for (const child of feature.children || []) {
       if (child.scenario) {
-        scenarios.push(toSyncScenario(child.scenario, filePath));
+        scenarios.push(toSyncScenario(child.scenario, filePath, featureTags));
       } else if (child.background) {
         // Background is in children, not directly on feature
         background = child.background;
       } else if (child.rule) {
-        ruleScenarios.push(...parseRule(child.rule, content, filePath));
+        ruleScenarios.push(...parseRule(child.rule, content, filePath, featureTags));
       }
     }
     
@@ -516,7 +518,7 @@ function parseGherkinFile(content, filePath) {
  * A scenario as it is sent to TestCollab. TCV-6912: top-level scenarios and scenarios
  * under a Rule: both go through here, so a Scenario Outline is read the same way in both.
  */
-function toSyncScenario(scenario, filePath) {
+function toSyncScenario(scenario, filePath, inheritedTags) {
   const steps = scenario.steps || [];
   const stepsText = steps.map(step => `${step.keyword}${step.text}`).join('\n');
   // TCV-6057: a Scenario Outline's Examples become a test dataset its steps reference
@@ -530,7 +532,7 @@ function toSyncScenario(scenario, filePath) {
     // case's title, so "Return after <days> days" would be stored as "Return after  days".
     title: examples ? toDatasetReferences(scenario.name, examples.parameters) : scenario.name,
     steps: normalizedSteps,
-    tags: tagNames(scenario.tags),
+    tags: (inheritedTags || []).concat(tagNames(scenario.tags)),
     examples
   };
 }
@@ -552,7 +554,7 @@ function tagNames(tags) {
  * The hash stays on the scenario's own steps, so a scenario moved to another rule of the
  * same file updates its case.
  */
-function parseRule(rule, content, filePath) {
+function parseRule(rule, content, filePath, featureTags) {
   let background = null;
   const scenarios = [];
   for (const child of rule.children || []) {
@@ -578,14 +580,13 @@ function parseRule(rule, content, filePath) {
   }
   // Not rewritten for an outline's Examples, like the feature background (TCV-6057)
   const backgroundSteps = background ? background.steps.map(step => formatStep(step)) : [];
-  const ruleTags = tagNames(rule.tags);
+  const inheritedTags = (featureTags || []).concat(tagNames(rule.tags));
 
   return scenarios.map(scenario => {
-    const synced = toSyncScenario(scenario, filePath);
+    const synced = toSyncScenario(scenario, filePath, inheritedTags);
     return {
       ...synced,
       steps: backgroundSteps.concat(synced.steps),
-      tags: ruleTags.concat(synced.tags),
       rule: syncRule
     };
   });
@@ -721,7 +722,9 @@ function buildSyncPayload(projectId, prevCommit, headCommit, changes, resolvedId
           title: scenario.title
         };
 
-        if (scenario.tags && scenario.tags.length > 0) {
+        // TCV-7053: an empty list on a changed file tells the API to remove the
+        // final inherited tag. Omitting the field means "leave tags unchanged".
+        if (Array.isArray(scenario.tags) && (scenario.tags.length > 0 || change.status !== 'A')) {
           payloadScenario.tags = scenario.tags;
         }
         
