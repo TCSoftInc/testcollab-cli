@@ -494,7 +494,13 @@ export function parseJUnitXml(junitXmlContent) {
   // matches one of: a closing </testsuite>, an opening <testsuite> (possibly
   // self-closing), or a complete <testcase> (self-closing or with body).
   // \b ensures we don't match the outer <testsuites> wrapper.
-  const tokenRegex = /<\/testsuite\s*>|<testsuite\b([^>]*?)(\/?)>|<testcase\b([^>]*?)(?:\/>|>([\s\S]*?)<\/testcase\s*>)/gi;
+  // TCV-7055: a real Cucumber outline name is encoded as `&lt;parameter>`.
+  // Match quoted attribute values as a unit so its literal `>` does not end the tag.
+  const attributes = `((?:"[^"]*"|'[^']*'|[^>'"])*?)`;
+  const tokenRegex = new RegExp(
+    `<\\/testsuite\\s*>|<testsuite\\b${attributes}(\\/?)>|<testcase\\b${attributes}(?:\\/>|>([\\s\\S]*?)<\\/testcase\\s*>)`,
+    'gi'
+  );
   const suiteStack = [];
   // First pass: collect each testcase with a snapshot of its ancestor stack
   // and the maximum nesting depth seen anywhere in the file. This lets us

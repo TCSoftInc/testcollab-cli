@@ -65,8 +65,10 @@ const writes = () => calls.filter(call => call.method !== 'GET');
 const resultWrites = () => calls.filter(call => /^\/executedtestcases\/\d+$/.test(call.endpoint));
 
 it.each([false, true])('reports pass/fail/skipped and one rolled-up outline with auto-create=%s', async auto => {
+  // TCV-7055: Cucumber escapes `<` but leaves `>` literal in outline names, and includes Rule + Examples labels.
+  cases[2].description = 'Rule: Card payments';
   cases.push(bddCase(24, 'Pending', 10)); assigned.push(24);
-  await run('<testcase classname="Login API" name="Sign in"/><testcase classname="Login API" name="Sign out"><failure message="broken"/></testcase><testcase classname="Login API" name="Pending"><skipped/></testcase><testcase classname="Login API" name="Pay &lt;method&gt; - #1.1: Pay visa" time="1"><failure message="declined"/></testcase><testcase classname="Login API" name="Pay &lt;method&gt; - #1.2: Pay amex" time="2"/>', auto);
+  await run('<testcase classname="Login API" name="Sign in"/><testcase classname="Login API" name="Sign out"><failure message="broken"/></testcase><testcase classname="Login API" name="Pending"><skipped/></testcase><testcase classname="Login API" name="Card payments - Pay &lt;method> - Cards - #1.1: Pay visa" time="1"><failure message="declined"/></testcase><testcase classname="Login API" name="Card payments - Pay &lt;method> - Cards - #1.2: Pay amex" time="2"/>', auto);
   expect(resultWrites().map(call => [call.endpoint, call.body.status])).toEqual([['/executedtestcases/1021', 1], ['/executedtestcases/1022', 2], ['/executedtestcases/1024', 3], ['/executedtestcases/1023', 2]]);
   expect(resultWrites()[3].body.time_taken).toBe(3000);
   expect(writes().some(call => /^\/(suites|testcases|tags)(\/|$)/.test(call.endpoint))).toBe(false);
