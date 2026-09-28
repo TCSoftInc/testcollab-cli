@@ -84,7 +84,7 @@ The package uses `"type": "module"`. This means:
 | `commander` | CLI argument parsing |
 | `simple-git` | Git operations (diff, log, status) |
 | `@cucumber/gherkin` | Gherkin `.feature` file parsing |
-| `testcollab-sdk` | TestCollab API client (createTestPlan, report, getTestPlan) |
+| `@testcollab/sdk` | TestCollab API client (createTestPlan, report, getTestPlan) |
 | `testcollab-cypress-plugin` | Shared result upload logic (report) |
 
 ## Testing

@@ -16,8 +16,8 @@
  * on create, and the test plan picks the release up from the build (TCV-6787). A
  * release is a planning decision a person makes.
  *
- * Builds shipped after the last `testcollab-sdk` release, so these calls are made
- * directly against the REST API rather than through the SDK.
+ * These calls stay on the REST API because generated payload serializers drop
+ * keys they do not know.
  */
 
 function buildUrl(baseApiUrl, endpoint, token) {

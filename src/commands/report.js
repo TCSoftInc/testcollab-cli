@@ -1461,7 +1461,7 @@ function createSdkConfig(apiKey, apiUrl) {
  * Creates all missing TestCollab resources (tag, suites, test cases, folder, test plan)
  * from the parsed test result file, then returns the new test plan ID.
  *
- * Uses testcollab-sdk (same pattern as createTestPlan.js), except for the test
+ * Uses @testcollab/sdk (same pattern as createTestPlan.js), except for the test
  * plan create — see step 9.
  */
 async function autoCreateTestPlan({ apiKey, apiUrl, projectId, parsedReport, buildRef, environment }) {
