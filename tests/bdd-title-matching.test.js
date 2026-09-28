@@ -1,247 +1,145 @@
-/**
- * TCV-7028: matching CI results to the test cases `tc sync` created.
- *
- * A synced .feature file holds no TestCollab id, so these tests cover the pair
- * that identifies a case instead: the feature title and the scenario title.
- */
-
+/** TCV-7028: real SDK decoding and report parsing; only HTTP is stubbed. */
 import { jest } from '@jest/globals';
-import {
-  BDD_TITLE_CHUNK_SIZE,
-  applyBddMatches,
-  collectBddLookup,
-  featureTitleCandidates,
-  indexBddMatches,
-  matchBddSyncedCases
-} from '../src/lib/bddCases.js';
-import { addBddMatchesToUpload, parseJUnitReport } from '../src/commands/report.js';
+import { matchBddSyncedCases, matchesScenarioTitle, rollUpBddResults } from '../src/lib/bddCases.js';
+import { parseJUnitReport, addBddMatchesToUpload, humanizeSuiteName } from '../src/commands/report.js';
 
-// What `@cucumber/junit-xml-formatter` writes: the feature in classname, the
-// scenario in name, and no TestCollab id anywhere.
-const CUCUMBER_JUNIT = `<?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="Cucumber" tests="3" failures="1" skipped="0" time="0.5">
-  <testcase classname="User login" name="Valid password signs in" time="0.1" />
-  <testcase classname="User login" name="Wrong password is refused" time="0.2">
-    <failure message="expected 401">AssertionError: expected 401 but got 200</failure>
-  </testcase>
-  <testcase classname="Checkout" name="Valid password signs in" time="0.2" />
-</testsuite>`;
-
-function apiResponse(titleMatches, ok = true, status = 200) {
-  return Promise.resolve({
-    ok,
-    status,
-    statusText: ok ? 'OK' : 'Error',
-    json: () => Promise.resolve({ success: true, results: { suites: {}, cases: {}, titleMatches } }),
-    text: () => Promise.resolve('')
+const options = { baseApiUrl: 'http://localhost:1337', apiKey: 'test-key', projectId: 4, humanizeSuiteName };
+const suite = (id = 11, title = 'Login API', extra = {}) => ({ id, title, parent_id: 0, is_bdd_managed: true, ...extra });
+const testCase = (id = 21, title = 'Sign in', extra = {}) => ({ id, title, is_bdd_managed: true, ...extra });
+const result = (title = 'Sign in', extra = {}) => ({ title, suite: 'Login API', classname: 'Login API', status: 1, configId: '0', duration: 1, ...extra });
+const originalFetch = global.fetch;
+function api(suites, cases = {}) {
+  global.fetch = jest.fn(async input => {
+    const url = new URL(input);
+    expect(url.searchParams.get('project')).toBe('4');
+    expect(url.searchParams.get('token')).toBe('test-key');
+    expect(url.searchParams.get('_limit')).toBe('-1');
+    if (url.pathname === '/suites') return new Response(JSON.stringify(suites));
+    if (url.pathname === '/testcases') return new Response(JSON.stringify(cases[url.searchParams.get('suite')] || []));
+    throw new Error(`Unexpected endpoint ${url.pathname}`);
   });
 }
+afterEach(() => { global.fetch = originalFetch; jest.restoreAllMocks(); });
 
-describe('featureTitleCandidates', () => {
-  test('reads the feature from the suite a flat JUnit report gives', () => {
-    expect(featureTitleCandidates({ suite: 'User login', suitePath: ['User login'] })).toEqual(['User login']);
-  });
-
-  test('tries the nearest suite first, then its ancestors', () => {
-    expect(featureTitleCandidates({ suitePath: ['features', 'Auth', 'User login'] }))
-      .toEqual(['User login', 'Auth', 'features']);
-  });
-
-  test('falls back to the leaf suite when there is no path', () => {
-    expect(featureTitleCandidates({ suite: 'User login' })).toEqual(['User login']);
-  });
-
-  test('drops blanks and duplicates', () => {
-    expect(featureTitleCandidates({ suitePath: ['Auth', '  ', 'Auth'] })).toEqual(['Auth']);
-  });
-
-  test('a test with no suite at all has nothing to match on', () => {
-    expect(featureTitleCandidates({ title: 'orphan' })).toEqual([]);
-  });
+it('a marker wins without a title lookup', async () => {
+  api([suite()], { 11: [testCase()] });
+  const allTests = [result('[TC-90] Sign in', { tcId: '90' })];
+  expect(await matchBddSyncedCases({ ...options, allTests })).toBe(0);
+  expect(allTests[0].tcId).toBe('90');
+  expect(global.fetch).not.toHaveBeenCalled();
+});
+it('uses exact raw feature title and normalizes only the scenario title', async () => {
+  api([suite()], { 11: [testCase()] });
+  const allTests = [result('  SIGN\tin '), result('Sign in', { classname: 'Login Api' })];
+  expect(await matchBddSyncedCases({ ...options, allTests })).toBe(1);
+  expect(allTests[0].bddCaseId).toBe('21');
+  expect(allTests[1].tcId).toBeUndefined();
+});
+it('keeps classname when nested JUnit paths describe a different hierarchy', async () => {
+  api([suite()], { 11: [testCase()] });
+  const parsed = parseJUnitReport('<testsuite name="runner"><testsuite name="directory"><testcase classname="Login API" name="Sign in"/></testsuite></testsuite>');
+  expect(parsed.allTests[0].suitePath).toEqual(['runner', 'directory']);
+  await matchBddSyncedCases({ ...options, allTests: parsed.allTests });
+  addBddMatchesToUpload(parsed);
+  expect(parsed.resultsToUpload['0'][0].tcId).toBe('21');
+});
+it('does not confuse the sync folder with its same-named feature', async () => {
+  api([suite(10), suite(11, 'Login API', { parent_id: 10 })], { 11: [testCase()] });
+  const allTests = [result()];
+  expect(await matchBddSyncedCases({ ...options, allTests })).toBe(1);
+});
+it('skips two feature suites with the same raw title', async () => {
+  api([suite(11), suite(12)], { 11: [testCase()], 12: [testCase(22)] });
+  const allTests = [result()];
+  await matchBddSyncedCases({ ...options, allTests });
+  expect(allTests[0].bddUnmatchedReason).toBe('ambiguous feature title');
+  expect(allTests[0].tcId).toBeUndefined();
+  expect(global.fetch).toHaveBeenCalledTimes(1);
+});
+it('skips duplicate scenario titles instead of choosing the oldest case', async () => {
+  api([suite()], { 11: [testCase(), testCase(22, ' SIGN  IN ')] });
+  const allTests = [result()];
+  await matchBddSyncedCases({ ...options, allTests });
+  expect(allTests[0].bddUnmatchedReason).toBe('ambiguous scenario title');
+  expect(allTests[0].tcId).toBeUndefined();
+});
+it('marks a missing scenario as unmatched and never falls through to a manual case', async () => {
+  api([suite(), suite(12, 'Login Api', { is_bdd_managed: false })], { 11: [], 12: [testCase()] });
+  const allTests = [result()];
+  await matchBddSyncedCases({ ...options, allTests, matchUnmanaged: true });
+  expect(allTests[0].bddUnmatchedReason).toContain('not synced');
+  expect(global.fetch).toHaveBeenCalledTimes(2);
+});
+it.each([
+  { archived: true }, { is_bdd_managed: false }, { is_reference: true }
+])('does not match an ineligible BDD case: %j', async extra => {
+  api([suite()], { 11: [testCase(21, 'Sign in', extra)] });
+  const allTests = [result()];
+  await matchBddSyncedCases({ ...options, allTests });
+  expect(allTests[0].bddUnmatchedReason).toBeDefined();
+});
+it('preserves separate cases with different titles even when their steps are identical', async () => {
+  api([suite()], { 11: [testCase(21, 'Pay by card'), testCase(22, 'Pay by wallet')] });
+  const allTests = [result('Pay by card'), result('Pay by wallet')];
+  await matchBddSyncedCases({ ...options, allTests });
+  expect(allTests.map(test => test.tcId)).toEqual(['21', '22']);
+  expect(global.fetch).toHaveBeenCalledTimes(2);
+});
+it('matches manual cases through the humanized hierarchy in existing-plan mode', async () => {
+  api([suite(12, 'Login', { is_bdd_managed: false })], { 12: [testCase(23, 'Sign in', { is_bdd_managed: false })] });
+  const allTests = [result('SIGN IN', { classname: 'com.app.LoginTests', suite: 'com.app.LoginTests' })];
+  await matchBddSyncedCases({ ...options, allTests, matchUnmanaged: true });
+  expect(allTests[0].matchedCaseId).toBe('23');
+  expect(allTests[0].bddCaseId).toBeUndefined();
+});
+it('leaves unmatched manual results for the auto-create path', async () => {
+  api([]);
+  const allTests = [result()];
+  await matchBddSyncedCases({ ...options, allTests });
+  expect(allTests[0].bddUnmatchedReason).toBeUndefined();
+  expect(allTests[0].tcId).toBeUndefined();
+});
+it('a lookup failure aborts before auto-create can duplicate an unknown BDD case', async () => {
+  global.fetch = jest.fn(async () => new Response('{}', { status: 403 }));
+  await expect(matchBddSyncedCases({ ...options, allTests: [result()] })).rejects.toThrow();
 });
 
-describe('collectBddLookup', () => {
-  test('asks about every unresolved test, by feature and by scenario', () => {
-    const { allTests } = parseJUnitReport(CUCUMBER_JUNIT);
-    expect(collectBddLookup(allTests)).toEqual({
-      featureTitles: ['User login', 'Checkout'],
-      scenarioTitles: ['Valid password signs in', 'Wrong password is refused']
-    });
-  });
-
-  test('skips tests that already carry a TestCollab id', () => {
-    const lookup = collectBddLookup([
-      { title: 'Already tagged', suite: 'User login', tcId: '42' },
-      { title: 'Valid password signs in', suite: 'User login' }
-    ]);
-    expect(lookup.scenarioTitles).toEqual(['Valid password signs in']);
-  });
-
-  test('a report with no suites asks nothing', () => {
-    expect(collectBddLookup([{ title: 'orphan' }])).toEqual({ featureTitles: [], scenarioTitles: [] });
-  });
+// Naming from cucumber/junit-xml-formatter (shared by current Cucumber JS and JVM).
+it.each([
+  ['Pay {{method}}', 'Pay visa'],
+  ['Pay {{method}}', 'Pay <method> - #1.1: Pay visa'],
+  ['Pay {{method}}', 'Pay <method> - Cards - #2.3: Pay visa'],
+  ['Pay', 'Pay - #1.1'],
+  ['Pay', 'Pay - Valid cards - #2.1'],
+  ['Pay ({{method}}) + tax?', 'Pay (visa) + tax?']
+])('matches outline %s to %s', (title, name) => {
+  expect(matchesScenarioTitle(testCase(1, title), name)).toBe(true);
 });
-
-describe('applyBddMatches', () => {
-  const matches = [
-    { caseId: 11, caseTitle: 'Valid password signs in', suiteId: 3, suiteTitle: 'User login' },
-    { caseId: 12, caseTitle: 'Wrong password is refused', suiteId: 3, suiteTitle: 'User login' },
-    { caseId: 13, caseTitle: 'Valid password signs in', suiteId: 4, suiteTitle: 'Checkout' }
-  ];
-
-  test('the same scenario title under two features lands on two different cases', () => {
-    const { allTests } = parseJUnitReport(CUCUMBER_JUNIT);
-    expect(applyBddMatches(allTests, indexBddMatches(matches))).toBe(3);
-    expect(allTests.map(t => t.tcId)).toEqual(['11', '12', '13']);
-    expect(allTests.map(t => t.bddCaseId)).toEqual(['11', '12', '13']);
-  });
-
-  test('matches through a different case and spacing', () => {
-    const tests = [{ title: '  VALID   password signs in ', suite: 'user login' }];
-    expect(applyBddMatches(tests, indexBddMatches(matches))).toBe(1);
-    expect(tests[0].tcId).toBe('11');
-  });
-
-  test('a scenario of another feature is left unresolved', () => {
-    const tests = [{ title: 'Wrong password is refused', suite: 'Checkout' }];
-    expect(applyBddMatches(tests, indexBddMatches(matches))).toBe(0);
-    expect(tests[0].tcId).toBeUndefined();
-  });
-
-  test('an ancestor suite matches when the nearest one does not', () => {
-    const tests = [{ title: 'Valid password signs in', suitePath: ['User login', 'Happy path'] }];
-    expect(applyBddMatches(tests, indexBddMatches(matches))).toBe(1);
-    expect(tests[0].tcId).toBe('11');
-  });
-
-  test('a test that already has an id is never re-pointed', () => {
-    const tests = [{ title: 'Valid password signs in', suite: 'User login', tcId: '99' }];
-    expect(applyBddMatches(tests, indexBddMatches(matches))).toBe(0);
-    expect(tests[0].tcId).toBe('99');
-    expect(tests[0].bddCaseId).toBeUndefined();
-  });
-
-  test('two synced cases with the same title resolve to the older one, every run', () => {
-    const duplicates = [
-      { caseId: 11, caseTitle: 'Valid password signs in', suiteId: 3, suiteTitle: 'User login' },
-      { caseId: 77, caseTitle: 'Valid password signs in', suiteId: 3, suiteTitle: 'User login' }
-    ];
-    const tests = [{ title: 'Valid password signs in', suite: 'User login' }];
-    applyBddMatches(tests, indexBddMatches(duplicates));
-    expect(tests[0].tcId).toBe('11');
-  });
-
-  test('an incomplete match is ignored rather than trusted', () => {
-    expect(indexBddMatches([{ caseId: 5, caseTitle: 'x' }, { caseTitle: 'y', suiteTitle: 'f' }, null]).size).toBe(0);
-  });
+it('does not treat an arbitrary title prefix as an outline row', () => {
+  expect(matchesScenarioTitle(testCase(1, 'Pay'), 'Payment failed')).toBe(false);
+  expect(matchesScenarioTitle(testCase(1, 'Pay'), 'Pay - another scenario')).toBe(false);
 });
-
-describe('matchBddSyncedCases', () => {
-  const options = { baseApiUrl: 'http://localhost:1337', apiKey: 'k-1', projectId: 8 };
-
-  afterEach(() => {
-    delete global.fetch;
-    jest.restoreAllMocks();
-  });
-
-  test('asks the API about the parsed titles and applies what comes back', async () => {
-    global.fetch = jest.fn(() => apiResponse([
-      { caseId: 11, caseTitle: 'Valid password signs in', suiteId: 3, suiteTitle: 'User login' }
-    ]));
-    const { allTests } = parseJUnitReport(CUCUMBER_JUNIT);
-
-    expect(await matchBddSyncedCases({ ...options, allTests })).toBe(1);
-    expect(global.fetch).toHaveBeenCalledTimes(1);
-
-    const [url, request] = global.fetch.mock.calls[0];
-    expect(url).toBe('http://localhost:1337/bdd/resolve-ids?token=k-1');
-    expect(JSON.parse(request.body)).toEqual({
-      projectId: 8,
-      // A TestCollab that predates this feature reads only these two and answers
-      // empty results, instead of failing the run.
-      features: [],
-      scenarios: [],
-      titles: {
-        features: ['User login', 'Checkout'],
-        scenarios: ['Valid password signs in', 'Wrong password is refused']
-      }
-    });
-    expect(allTests[0].tcId).toBe('11');
-  });
-
-  test('sends long title lists in chunks', async () => {
-    global.fetch = jest.fn(() => apiResponse([]));
-    const allTests = Array.from({ length: BDD_TITLE_CHUNK_SIZE + 1 }, (unused, i) => ({
-      title: `Scenario ${i}`,
-      suite: 'User login'
-    }));
-
-    await matchBddSyncedCases({ ...options, allTests });
-    expect(global.fetch).toHaveBeenCalledTimes(2);
-    expect(JSON.parse(global.fetch.mock.calls[0][1].body).titles.scenarios).toHaveLength(BDD_TITLE_CHUNK_SIZE);
-    expect(JSON.parse(global.fetch.mock.calls[1][1].body).titles.scenarios).toHaveLength(1);
-  });
-
-  test('a project with nothing synced costs no request', async () => {
-    global.fetch = jest.fn(() => apiResponse([]));
-    expect(await matchBddSyncedCases({ ...options, allTests: [{ title: 'orphan' }] })).toBe(0);
-    expect(global.fetch).not.toHaveBeenCalled();
-  });
-
-  test('a server that does not answer with matches is not an error', async () => {
-    global.fetch = jest.fn(() => Promise.resolve({
-      ok: true,
-      status: 200,
-      json: () => Promise.resolve({ success: true, results: { suites: {}, cases: {} } }),
-      text: () => Promise.resolve('')
-    }));
-    const { allTests } = parseJUnitReport(CUCUMBER_JUNIT);
-    expect(await matchBddSyncedCases({ ...options, allTests })).toBe(0);
-    expect(allTests[0].tcId).toBeNull();
-  });
-
-  test('a failed lookup warns and lets the upload go on', async () => {
-    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
-    global.fetch = jest.fn(() => apiResponse([], false, 500));
-    const { allTests } = parseJUnitReport(CUCUMBER_JUNIT);
-
-    expect(await matchBddSyncedCases({ ...options, allTests })).toBe(0);
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('Could not check for BDD-synced test cases'));
-  });
+it('recognizes the formatter rule prefix from the synced description', () => {
+  expect(matchesScenarioTitle(testCase(1, 'Refund', { description: 'Background\nRule: Within 30 days\nOther' }), 'Within 30 days - Refund')).toBe(true);
 });
-
-describe('addBddMatchesToUpload', () => {
-  test('a matched result joins the upload and stops counting as missing an id', () => {
-    const parsedReport = parseJUnitReport(CUCUMBER_JUNIT);
-    expect(parsedReport.resultsToUpload).toEqual({});
-    // The parser deduplicates by title: the same scenario title ran under two features.
-    expect(parsedReport.unresolvedIds).toEqual(['Valid password signs in', 'Wrong password is refused']);
-
-    applyBddMatches(parsedReport.allTests, indexBddMatches([
-      { caseId: 11, caseTitle: 'Valid password signs in', suiteId: 3, suiteTitle: 'User login' },
-      { caseId: 12, caseTitle: 'Wrong password is refused', suiteId: 3, suiteTitle: 'User login' }
-    ]));
-    addBddMatchesToUpload(parsedReport);
-
-    expect(parsedReport.resultsToUpload['0']).toEqual([
-      expect.objectContaining({ tcId: '11', status: 1, title: 'Valid password signs in' }),
-      expect.objectContaining({ tcId: '12', status: 2, title: 'Wrong password is refused' })
-    ]);
-    // The Checkout run of the same scenario title matched nothing, so the title stays.
-    expect(parsedReport.unresolvedIds).toEqual(['Valid password signs in']);
-  });
-
-  test('a failure carries its error details to the execution', () => {
-    const parsedReport = parseJUnitReport(CUCUMBER_JUNIT);
-    applyBddMatches(parsedReport.allTests, indexBddMatches([
-      { caseId: 12, caseTitle: 'Wrong password is refused', suiteId: 3, suiteTitle: 'User login' }
-    ]));
-    addBddMatchesToUpload(parsedReport);
-
-    expect(parsedReport.resultsToUpload['0'][0]).toEqual(expect.objectContaining({
-      tcId: '12',
-      status: 2,
-      errDetails: 'AssertionError: expected 401 but got 200'
-    }));
-  });
+it('keeps a failed outline failed, sums durations and preserves errors and attachments', () => {
+  const rows = [result('row 1', { tcId: '21', bddCaseId: '21', status: 2, duration: 2, errDetails: 'broken', attachmentPaths: ['fail.png'] }), result('row 2', { tcId: '21', bddCaseId: '21', duration: 3, attachmentPaths: ['pass.png'] })];
+  const rolled = rollUpBddResults(rows);
+  expect(rolled).toHaveLength(1);
+  expect(rolled[0]).toMatchObject({ status: 2, duration: 5, attachmentPaths: ['fail.png', 'pass.png'] });
+  expect(rolled[0].errDetails).toContain('row 1: broken');
+  expect(rows[0].duration).toBe(2);
+});
+it('keeps configurations separate and preserves skipped outlines', () => {
+  const rows = [result('row 1', { tcId: '21', bddCaseId: '21', status: 3 }), result('row 2', { tcId: '21', bddCaseId: '21', status: 3 }), result('row 3', { tcId: '21', bddCaseId: '21', configId: '7' })];
+  expect(rollUpBddResults(rows).map(row => [row.configId, row.status])).toEqual([['0', 3], ['7', 1]]);
+});
+it('rolls parsed outline rows up in existing-plan upload records', async () => {
+  api([suite()], { 11: [testCase(21, 'Pay {{method}}')] });
+  const parsed = parseJUnitReport('<testsuite><testcase classname="Login API" name="Pay &lt;method&gt; - #1.1: Pay visa"><failure message="declined"/></testcase><testcase classname="Login API" name="Pay &lt;method&gt; - #1.2: Pay amex"/></testsuite>');
+  await matchBddSyncedCases({ ...options, allTests: parsed.allTests });
+  addBddMatchesToUpload(parsed);
+  expect(parsed.resultsToUpload['0']).toHaveLength(1);
+  expect(parsed.resultsToUpload['0'][0].status).toBe(2);
+  expect(parsed.unresolvedIds).toEqual([]);
 });

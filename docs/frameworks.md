@@ -345,7 +345,7 @@ tc report --project 123 --test-plan-id 456 \
   --format junit --result-file ./reports/results.xml
 ```
 
-**Feature files synced with `tc sync`?** Then your scenarios need no TestCollab ID in their name. Both formatters write the `Feature:` title as the `classname` and the `Scenario:` title as the test name, which is the pair `tc sync` stored — so `tc report` finds the synced case on its own. See [BDD: results from synced `.feature` files](../README.md#bdd-results-from-synced-feature-files) for the two cases that still need a marker.
+**Feature files synced with `tc sync`?** Then your scenarios need no TestCollab ID in their name. Cucumber's JUnit output uses the feature title as `classname`; the CLI also recognizes the formatter's numbered Examples names and rolls outline rows into one result. See [BDD: results from synced `.feature` files](../README.md#bdd-results-from-synced-feature-files) for matching, ambiguity and skipped-result rules.
 
 ---
 

@@ -395,7 +395,7 @@ tc report \
 
 #### Mapping test cases
 
-When using `--test-plan-id` (not `--auto-create`), your test names must include a TestCollab case ID so results can be matched. Any of these patterns work:
+TestCollab ID markers take precedence over title matching in either reporting mode. Any of these patterns work:
 
 ```
 [TC-123] Login should succeed          ← bracketed
@@ -410,7 +410,7 @@ A marker always wins over the trailing-number form, so `[TC-1730] ... and UTF-8`
 (`checkout-42`, `login-flow-123`); a name that merely ends in a hyphenated number, such as
 `Digest uses SHA-256`, carries no ID and needs an explicit marker.
 
-When using `--auto-create`, IDs are optional — tests without IDs are matched by title or created automatically.
+Without IDs, results match existing cases by suite and scenario title. `--test-plan-id` only reports to cases already assigned in that plan. `--auto-create` can create unmatched cases outside synced BDD features.
 
 #### BDD: results from synced `.feature` files
 
@@ -421,14 +421,16 @@ If your Gherkin feature files are synced into TestCollab with [`tc sync`](#tc-sy
              ↑ the Feature: title        ↑ the Scenario: title
 ```
 
-- Matching is limited to the suites and cases the sync owns, so a hand-written case that happens to share a title is never written to. Titles are compared without regard to case or extra spacing.
+- An ID marker wins first. Otherwise the raw JUnit `classname` must exactly equal a synced feature title, including case and spacing. Scenario titles ignore case and extra spacing. Directory containers created by sync are not feature suites.
+- If a feature is synced but a scenario is not, the summary lists it as unmatched and creates nothing. Run `tc sync` on the same commit that ran the tests before reporting.
+- Duplicate feature titles or ambiguous scenario matches produce a warning and are skipped. The command still exits successfully so a later `tc gate` can run.
 - With `--auto-create`, a matched scenario is added to the generated plan as it is: nothing is tagged, no suite tree is copied, and no second case is created.
-- Nothing to configure. In a project with no synced features the lookup costs one request that finds nothing, and a lookup that fails only warns.
+- Other classnames use the normal humanized suite/title matching and, with `--auto-create`, creation. A project can contain both synced Cucumber features and other tests.
+- If every auto-create result is unmatched or ambiguous, no empty plan is created. A lookup error stops reporting before it can create duplicate cases.
 
-Two things still need a marker, because their titles differ from what was synced:
+**Scenario Outlines:** expanded row names and the current Cucumber JS/JVM `Outline - Examples - #table.row` form match the outline, including titles containing `{{parameter}}` after sync. Rows roll up to one result per case and configuration: any failure makes the result failed; otherwise a skipped row makes it skipped. Durations are summed and failure details and attachments are retained. The dataset is unchanged; individual dataset-row results are not reported separately.
 
-- **`Scenario Outline`** — Cucumber reports one result per `Examples:` row, with the placeholders filled in, while the synced case keeps the literal `<placeholder>` text.
-- A scenario **renamed in Git but not yet synced**. Run `tc sync` on the same commit that ran the tests, and the titles agree again.
+A renamed feature file still matches after syncing because the feature title identifies it. Archived cases are excluded from title matching and from auto-created plans.
 
 #### Configuration-specific runs
 

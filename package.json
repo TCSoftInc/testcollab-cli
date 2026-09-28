@@ -28,6 +28,7 @@
   "dependencies": {
     "@cucumber/gherkin": "^33.1.0",
     "@cucumber/messages": "^28.1.0",
+    "@testcollab/sdk": "git+https://github.com/TCSoftInc/testcollab-sdk.git#97327f0aaac1d6a1a11d46d8d6adcd9908f08a1e",
     "commander": "^11.1.0",
     "simple-git": "^3.28.0",
     "testcollab-cypress-plugin": "^1.0.3",

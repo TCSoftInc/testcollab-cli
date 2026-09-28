@@ -1,205 +1,151 @@
-/**
- * bddCases.js
- *
- * TCV-7028: match the results of a Cucumber run to the test cases `tc sync`
- * created from the same .feature files.
- *
- * A synced feature file holds no TestCollab id, so the marker `tc report`
- * normally looks for in a test name does not exist. What every Cucumber report
- * does carry is the feature title (the JUnit `classname`, or the suite a
- * Mochawesome reporter wrote) and the scenario title (the test name) — and the
- * sync stored exactly that pair, as a BDD managed suite with a BDD managed test
- * case under it. So the pair is the identity, and the API resolves it.
- *
- * Only cases the sync owns can match. A hand written case that happens to share
- * a scenario title is never written to.
- */
+/** TCV-7028: resolve report results using the public SDK's BDD ownership fields. */
+import { Configuration, SuitesApi, TestCaseFromJSON } from '@testcollab/sdk';
 
-// The API refuses more titles than this in one request, and a long IN list is a
-// slow query against a large project.
-export const BDD_TITLE_CHUNK_SIZE = 200;
-
-/**
- * Normalize a test case title for comparison.
- * Lowercase, trim, collapse all whitespace to a single space.
- */
 export function normalizeTitle(title) {
   return String(title || '').toLowerCase().trim().replace(/\s+/g, ' ');
 }
 
-// A separator no title can hold, so "Login / a b" and "Login a / b" stay apart.
-const TITLE_KEY_SEPARATOR = '\u0000';
-
-function titleKey(featureTitle, scenarioTitle) {
-  return `${normalizeTitle(featureTitle)}${TITLE_KEY_SEPARATOR}${normalizeTitle(scenarioTitle)}`;
+export function featureTitle(test) {
+  // JUnit classname must survive nested testsuite paths and humanization.
+  return test.classname !== undefined ? test.classname : (test.suite || '');
 }
 
-/**
- * The feature titles a test could belong to, nearest first.
- *
- * A Cucumber JUnit report names the feature in `classname`, which the parser
- * reports as the test's suite. A nested report (Mochawesome from a Cucumber
- * preprocessor, or a runner that wraps features in a testsuite per directory)
- * puts the feature somewhere in the suite path, so the ancestors are tried
- * after the leaf.
- */
-export function featureTitleCandidates(test) {
-  const suitePath = Array.isArray(test?.suitePath) && test.suitePath.length
-    ? test.suitePath
-    : (test?.suite ? [test.suite] : []);
-
-  const candidates = suitePath
-    .map(title => String(title || '').trim())
-    .filter(Boolean)
-    .reverse();
-
-  return [...new Set(candidates)];
-}
-
-/**
- * The titles to ask the API about: every feature title a still-unresolved test
- * could belong to, and every scenario title it reported.
- */
-export function collectBddLookup(allTests) {
-  const featureTitles = new Set();
-  const scenarioTitles = new Set();
-
-  (allTests || []).forEach((test) => {
-    if (!test || test.tcId) {
-      return;
-    }
-    const scenarioTitle = String(test.title || '').trim();
-    const features = featureTitleCandidates(test);
-    if (!scenarioTitle || !features.length) {
-      return;
-    }
-    features.forEach(feature => featureTitles.add(feature));
-    scenarioTitles.add(scenarioTitle);
-  });
-
-  return {
-    featureTitles: [...featureTitles],
-    scenarioTitles: [...scenarioTitles]
-  };
-}
-
-export function chunkList(items, size) {
-  const chunks = [];
-  for (let i = 0; i < items.length; i += size) {
-    chunks.push(items.slice(i, i + size));
+export async function fetchSuiteCases({ baseApiUrl, apiKey, projectId, suiteId }) {
+  // TCV-6489: only the transport is raw; ownership is decoded by the generated SDK.
+  const params = new URLSearchParams({ project: String(projectId), suite: String(suiteId), _limit: '-1', token: apiKey });
+  const response = await fetch(`${baseApiUrl}/testcases?${params}`);
+  if (!response.ok) {
+    throw new Error(`Could not read cases in suite ${suiteId}: HTTP ${response.status}`);
   }
-  return chunks;
+  const cases = await response.json();
+  if (!Array.isArray(cases)) throw new Error(`Invalid case list for suite ${suiteId}`);
+  return cases.map(item => TestCaseFromJSON(item));
 }
 
-/**
- * Index the API's matches by feature title + scenario title.
- *
- * The API answers in id order, so when a project holds two synced cases with
- * the same title under the same feature the oldest one wins — the same case on
- * every run, rather than one that moves with the row order.
- */
-export function indexBddMatches(matches) {
-  const index = new Map();
+function escapeRegex(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 
-  (matches || []).forEach((match) => {
-    if (!match || !match.caseId || !match.suiteTitle || !match.caseTitle) {
-      return;
-    }
-    const key = titleKey(match.suiteTitle, match.caseTitle);
-    if (!index.has(key)) {
-      index.set(key, String(match.caseId));
+function canonicalTemplate(title) {
+  return normalizeTitle(title).replace(/<([^<>]+)>/g, '{{$1}}');
+}
+
+function matchesExpandedTitle(template, name) {
+  const parts = canonicalTemplate(template).split(/(\{\{[^{}]+\}\})/);
+  if (parts.length === 1) return false;
+  const pattern = parts.map(part => /^\{\{/.test(part) ? '.*?' : escapeRegex(part)).join('');
+  return new RegExp(`^${pattern}$`).test(normalizeTitle(name));
+}
+
+export function matchesScenarioTitle(testCase, reportedName) {
+  const title = normalizeTitle(testCase.title);
+  const name = normalizeTitle(reportedName);
+  const rule = String(testCase.description || '').split('\n').find(line => line.startsWith('Rule: '));
+  const titles = [title];
+  if (rule) titles.push(`${normalizeTitle(rule.slice(6))} - ${title}`);
+  return titles.some(candidate => {
+    if (candidate === name || matchesExpandedTitle(candidate, name)) return true;
+    // The JS/JVM message formatter appends Examples names and #table.row,
+    // followed by the expanded pickle name when the outline title is parameterized.
+    const numbered = name.match(/^(.*?) - #\d+\.\d+(?:: .*)?$/);
+    if (!numbered) return false;
+    const prefix = canonicalTemplate(numbered[1]);
+    const template = canonicalTemplate(candidate);
+    return prefix === template || prefix.startsWith(`${template} - `);
+  });
+}
+
+/** Marker IDs win; only unmarked results enter title matching. */
+export async function matchBddSyncedCases({ baseApiUrl, apiKey, projectId, allTests, humanizeSuiteName, matchUnmanaged = false }) {
+  const unresolved = (allTests || []).filter(test => !test.tcId);
+  if (!unresolved.length) return 0;
+  const config = new Configuration({
+    basePath: baseApiUrl,
+    fetchApi: (url, options) => {
+      const target = new URL(url);
+      target.searchParams.set('token', apiKey);
+      // getAllSuites has no limit argument. Ask for the whole project, not 100 rows.
+      target.searchParams.set('_limit', '-1');
+      return fetch(target.toString(), options);
     }
   });
-
-  return index;
-}
-
-/**
- * Give every unresolved test the id of the synced case it belongs to.
- * `bddCaseId` marks the ones matched this way: they are owned by the sync, so
- * nothing downstream may tag, edit or re-create them.
- */
-export function applyBddMatches(allTests, index) {
-  let matched = 0;
-
-  (allTests || []).forEach((test) => {
-    if (!test || test.tcId) {
-      return;
+  const suites = await new SuitesApi(config).getAllSuites({ project: projectId });
+  const bddSuites = suites.filter(suite => suite.isBddManaged && !suite.isReference);
+  // Sync's directory/file containers can have the same title as their feature.
+  // Features are the leaves of that BDD tree; empty features remain candidates.
+  const bddParents = new Set(bddSuites.map(suite => Number(suite.parentId)));
+  const features = bddSuites.filter(suite => !bddParents.has(Number(suite.id)));
+  const casesBySuite = new Map();
+  const casesIn = async suite => {
+    if (!casesBySuite.has(suite.id)) {
+      casesBySuite.set(suite.id, await fetchSuiteCases({ baseApiUrl, apiKey, projectId, suiteId: suite.id }));
     }
-    for (const feature of featureTitleCandidates(test)) {
-      const caseId = index.get(titleKey(feature, test.title));
-      if (caseId) {
-        test.tcId = caseId;
-        test.bddCaseId = caseId;
-        matched += 1;
-        return;
+    return casesBySuite.get(suite.id);
+  };
+  let matched = 0;
+  for (const test of unresolved) {
+    const candidates = features.filter(suite => suite.title === featureTitle(test));
+    if (candidates.length) {
+      if (candidates.length !== 1) {
+        test.bddUnmatchedReason = 'ambiguous feature title';
+        continue;
+      }
+      const cases = (await casesIn(candidates[0])).filter(testCase => testCase.isBddManaged && !testCase.archived && !testCase.isReference);
+      const matches = cases.filter(testCase => matchesScenarioTitle(testCase, test.title));
+      if (matches.length !== 1) {
+        test.bddUnmatchedReason = matches.length ? 'ambiguous scenario title' : 'scenario is not synced (or is archived)';
+        continue;
+      }
+      test.tcId = String(matches[0].id);
+      test.bddCaseId = test.tcId;
+      matched++;
+      continue;
+    }
+    // Existing-plan mode can reuse a normal case, but must never create one.
+    // Auto-create keeps its existing humanized hierarchy/title/create path.
+    if (matchUnmanaged) {
+      const path = test.suitePath?.length ? test.suitePath : [test.suite || ''];
+      let parentId = 0;
+      let suite;
+      for (const part of path) {
+        suite = suites.find(item => !item.isBddManaged && item.title === humanizeSuiteName(part) && Number(item.parentId || 0) === parentId);
+        if (!suite) break;
+        parentId = Number(suite.id);
+      }
+      if (suite) {
+        const testCase = (await casesIn(suite)).find(item => !item.isBddManaged && !item.archived && normalizeTitle(item.title) === normalizeTitle(test.title));
+        if (testCase) {
+          test.tcId = String(testCase.id);
+          test.matchedCaseId = test.tcId;
+        }
       }
     }
-  });
-
+  }
   return matched;
 }
 
-/**
- * Ask the API which BDD managed cases carry these titles.
- *
- * The empty `features` and `scenarios` hash lists are deliberate: a TestCollab
- * that predates this feature ignores `titles` and answers with empty results
- * rather than failing, so an older server degrades to "nothing matched".
- */
-export async function fetchBddTitleMatches({ baseApiUrl, apiKey, projectId, featureTitles, scenarioTitles }) {
-  const matches = [];
-
-  for (const features of chunkList(featureTitles, BDD_TITLE_CHUNK_SIZE)) {
-    for (const scenarios of chunkList(scenarioTitles, BDD_TITLE_CHUNK_SIZE)) {
-      const response = await fetch(`${baseApiUrl}/bdd/resolve-ids?token=${encodeURIComponent(apiKey)}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({
-          projectId,
-          features: [],
-          scenarios: [],
-          titles: { features, scenarios }
-        })
-      });
-
-      if (!response.ok) {
-        const body = await response.text().catch(() => '');
-        throw new Error(`HTTP ${response.status} ${body}`.trim());
-      }
-
-      const data = await response.json();
-      const found = data && data.results && Array.isArray(data.results.titleMatches)
-        ? data.results.titleMatches
-        : [];
-      matches.push(...found);
+// A partially skipped outline is skipped; a failure always wins. Keep configs apart.
+const RESULT_PRIORITY = { 1: 0, 0: 1, 3: 2, 4: 3, 2: 4 };
+export function rollUpBddResults(tests) {
+  const groups = new Map();
+  const result = [];
+  for (const test of tests) {
+    if (!test.tcId || test.bddUnmatchedReason) continue;
+    if (!test.bddCaseId) {
+      result.push(test);
+      continue;
     }
+    const key = `${test.configId || '0'}:${test.tcId}`;
+    let combined = groups.get(key);
+    if (!combined) {
+      combined = { ...test, duration: 0, errDetails: null, attachmentPaths: [] };
+      groups.set(key, combined);
+      result.push(combined);
+    }
+    if (RESULT_PRIORITY[test.status] > RESULT_PRIORITY[combined.status]) combined.status = test.status;
+    combined.duration += Number(test.duration) || 0;
+    if (test.errDetails) combined.errDetails = [combined.errDetails, `${test.title}: ${test.errDetails}`].filter(Boolean).join('\n\n');
+    combined.attachmentPaths = [...new Set([...combined.attachmentPaths, ...(test.attachmentPaths || [])])];
   }
-
-  return matches;
-}
-
-/**
- * Resolve every unresolved test against the synced cases and return how many
- * were matched.
- *
- * A failure here is a warning, never a throw: a project with no synced features
- * has nothing to gain from this step, and it must not be able to fail a run
- * that would otherwise upload its results.
- */
-export async function matchBddSyncedCases({ baseApiUrl, apiKey, projectId, allTests }) {
-  const { featureTitles, scenarioTitles } = collectBddLookup(allTests);
-  if (!featureTitles.length || !scenarioTitles.length) {
-    return 0;
-  }
-
-  let matches;
-  try {
-    matches = await fetchBddTitleMatches({ baseApiUrl, apiKey, projectId, featureTitles, scenarioTitles });
-  } catch (error) {
-    console.warn(`⚠️  Could not check for BDD-synced test cases: ${error?.message || String(error)}`);
-    return 0;
-  }
-
-  return applyBddMatches(allTests, indexBddMatches(matches));
+  return result;
 }
