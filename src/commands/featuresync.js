@@ -872,12 +872,12 @@ function matchScenarios(scenarios, oldScenarios, resolvedIds) {
 }
 
 /**
- * TCV-7036: the test case of each old scenario. A hash that one old scenario has gets the
- * case resolve-ids names for it, as before. Old scenarios that share a hash share out the
- * live cases the API lists for it (caseLists): first each takes the oldest free case with
- * its title, then the rest take the oldest free cases in file order, so scenarios with the
- * same steps and title keep the cases of their order. An API without caseLists names one
- * case per hash, which then stands for all of them, as before.
+ * TCV-7036, TCV-7056: the test case of each old scenario. When the API supplies caseLists,
+ * use its live cases even when only one old scenario has the hash. The legacy cases entry
+ * can point at an archived twin, which would swap the cases when that twin returns. First
+ * each scenario takes the oldest free case with its title, then the rest take the oldest
+ * free cases in file order. An API without caseLists names one case per hash, which then
+ * stands for all of them, as before.
  */
 function caseOfEachOldScenario(oldScenarios, resolvedIds) {
   const caseIds = oldScenarios.map(old => {
@@ -891,7 +891,7 @@ function caseOfEachOldScenario(oldScenarios, resolvedIds) {
   });
 
   indexesByHash.forEach((indexes, hash) => {
-    if (indexes.length < 2 || !Array.isArray(caseLists[hash])) {
+    if (!Array.isArray(caseLists[hash])) {
       return;
     }
     const free = caseLists[hash].slice();

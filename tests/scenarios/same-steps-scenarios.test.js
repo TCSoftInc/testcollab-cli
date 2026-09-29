@@ -186,6 +186,24 @@ ${outline('Pay with a card', 'visa')}`;
     ]);
   });
 
+  test('restoring an archived twin keeps the remaining live scenario on its case', async () => {
+    // TCV-7056: the legacy cases entry can name the archived twin. caseLists contains
+    // only the live case and must win even though the previous file has one scenario.
+    const withoutWallet = `Feature: Checkout
+${outline('Pay with a card', 'visa')}`;
+    const resolvedAfterArchive = {
+      cases: { [PAY_HASH]: { caseId: WALLET_CASE } },
+      caseLists: { [PAY_HASH]: [{ caseId: CARD_CASE, title: 'Pay with a card' }] }
+    };
+
+    const { change } = await syncModification(withoutWallet, TICKET_EXAMPLE, resolvedAfterArchive);
+
+    expect(summary(change)).toEqual([
+      ['Pay with a card', PAY_HASH, CARD_CASE, undefined],
+      ['Pay with a wallet', undefined, undefined, undefined]
+    ]);
+  });
+
   test('the same steps and the same title: the cases go in file order, and removing the second removes its case', async () => {
     const twins = `Feature: Checkout
 ${outline('Pay', 'visa')}${outline('Pay', 'paypal')}`;
