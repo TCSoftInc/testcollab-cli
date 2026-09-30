@@ -24,7 +24,7 @@ import {
   TestPlanTestCasesApi,
   TestPlansConfigsApi,
   UsersApi,
-} from 'testcollab-sdk';
+} from '@testcollab/sdk';
 
 const STATUS_MAP = { 0: 'draft', 1: 'ready', 2: 'finished', 3: 'finished_with_failures' };
 const PRIORITY_MAP = { 0: 'low', 1: 'normal', 2: 'high' };

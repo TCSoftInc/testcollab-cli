@@ -24,7 +24,7 @@ import {
   UsersApi,
   TestCasesApi,
   ProjectUsersApi
-} from 'testcollab-sdk';
+} from '@testcollab/sdk';
 
 // TCV-6788: the build/release lookups and the plan create go through direct
 // requests instead of the SDK — the published SDK's TestPlanPayload does not
@@ -446,4 +446,3 @@ export async function createTestPlan(options) {
     process.exit(1);
   }
 }
-

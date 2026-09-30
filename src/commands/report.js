@@ -22,11 +22,16 @@ import {
   TestPlansAssignmentApi,
   UsersApi,
   ProjectsApi
-} from 'testcollab-sdk';
+} from '@testcollab/sdk';
 import { resolveBuild } from '../lib/builds.js';
 import { buildExecutionProvenance } from '../utils/executionProvenance.js';
 import { decodeXmlEntities } from '../lib/xml.js';
 import { extractAttachmentPaths, resolveAttachments } from '../lib/attachments.js';
+import { matchBddSyncedCases, normalizeTitle, fetchSuiteCases, rollUpBddResults, featureTitle } from '../lib/bddCases.js';
+
+// TCV-7028: normalizeTitle moved next to the BDD matching that shares it; it stays
+// exported here because that is where the auto-create title match reads it from.
+export { normalizeTitle };
 
 const RUN_RESULT_MAP = {
   pass: 1,
@@ -109,14 +114,6 @@ export function humanizeSuiteName(raw) {
     .join(' ');
 
   return name || 'Uncategorized';
-}
-
-/**
- * Normalize a test case title for comparison.
- * Lowercase, trim, collapse all whitespace to a single space.
- */
-export function normalizeTitle(title) {
-  return String(title || '').toLowerCase().trim().replace(/\s+/g, ' ');
 }
 
 function toAbsolutePath(inputPath) {
@@ -497,7 +494,13 @@ export function parseJUnitXml(junitXmlContent) {
   // matches one of: a closing </testsuite>, an opening <testsuite> (possibly
   // self-closing), or a complete <testcase> (self-closing or with body).
   // \b ensures we don't match the outer <testsuites> wrapper.
-  const tokenRegex = /<\/testsuite\s*>|<testsuite\b([^>]*?)(\/?)>|<testcase\b([^>]*?)(?:\/>|>([\s\S]*?)<\/testcase\s*>)/gi;
+  // TCV-7055: a real Cucumber outline name is encoded as `&lt;parameter>`.
+  // Match quoted attribute values as a unit so its literal `>` does not end the tag.
+  const attributes = `((?:"[^"]*"|'[^']*'|[^>'"])*?)`;
+  const tokenRegex = new RegExp(
+    `<\\/testsuite\\s*>|<testsuite\\b${attributes}(\\/?)>|<testcase\\b${attributes}(?:\\/>|>([\\s\\S]*?)<\\/testcase\\s*>)`,
+    'gi'
+  );
   const suiteStack = [];
   // First pass: collect each testcase with a snapshot of its ancestor stack
   // and the maximum nesting depth seen anywhere in the file. This lets us
@@ -580,6 +583,8 @@ export function parseJUnitXml(junitXmlContent) {
 
     return {
       title: rawName || '(Unnamed test case)',
+      // TCV-7028: retain the raw feature title even in nested JUnit reports.
+      classname: attrs.classname || '',
       suite: leafSuite,
       suitePath,
       testCaseId,
@@ -647,6 +652,7 @@ export function parseJUnitReport(junitXmlContent) {
 
   const allTests = testCases.map(tc => ({
     title: tc.title,
+    classname: tc.classname,
     suite: tc.suite,
     suitePath: Array.isArray(tc.suitePath) && tc.suitePath.length
       ? tc.suitePath
@@ -1461,7 +1467,7 @@ function createSdkConfig(apiKey, apiUrl) {
  * Creates all missing TestCollab resources (tag, suites, test cases, folder, test plan)
  * from the parsed test result file, then returns the new test plan ID.
  *
- * Uses testcollab-sdk (same pattern as createTestPlan.js), except for the test
+ * Uses @testcollab/sdk (same pattern as createTestPlan.js), except for the test
  * plan create — see step 9.
  */
 async function autoCreateTestPlan({ apiKey, apiUrl, projectId, parsedReport, buildRef, environment }) {
@@ -1475,10 +1481,26 @@ async function autoCreateTestPlan({ apiKey, apiUrl, projectId, parsedReport, bui
   const testPlanCasesApi = new TestPlanTestCasesApi(config);
   const testPlanAssignmentApi = new TestPlansAssignmentApi(config);
 
-  const allTests = parsedReport.allTests;
-  if (!allTests || !allTests.length) {
-    throw new Error('No tests found in result file for auto-create');
+  // TCV-7028: an unsynced/ambiguous BDD result must never reach the create path.
+  let allTests = parsedReport.allTests.filter(test => !test.bddUnmatchedReason);
+  const existingCasesById = new Map();
+  for (const test of allTests) {
+    if (!test.tcId || test.bddCaseId) continue;
+    if (!existingCasesById.has(test.tcId)) {
+      try {
+        existingCasesById.set(test.tcId, await testCasesApi.getTestCase({ id: Number(test.tcId), project: projectId }));
+      } catch (error) {
+        // Only a missing marker case may take the old title/create fallback.
+        if (error.status !== 404 && error.response?.status !== 404) throw error;
+        existingCasesById.set(test.tcId, null);
+      }
+    }
+    const existing = existingCasesById.get(test.tcId);
+    if (existing?.archived) test.bddUnmatchedReason = 'case is archived';
+    else if (existing?.isBddManaged) test.bddCaseId = String(existing.id);
   }
+  allTests = allTests.filter(test => !test.bddUnmatchedReason);
+  if (!allTests.length) return null;
 
   console.log('🔧 Auto-create mode: setting up TestCollab resources...');
 
@@ -1497,17 +1519,20 @@ async function autoCreateTestPlan({ apiKey, apiUrl, projectId, parsedReport, bui
   }
 
   // 2. Find or create "CI Imported" tag
-  const existingTags = await testCasesApi.getTestCasesTags({ project: projectId });
-  let ciTag = (existingTags || []).find(t => t.name === 'CI Imported');
-  if (!ciTag) {
-    ciTag = await testCasesApi.addTags({
-      testCasesTagPayload: { name: 'CI Imported', project: projectId }
-    });
+  let ciTag;
+  if (allTests.some(test => !test.bddCaseId)) {
+    const existingTags = await testCasesApi.getTestCasesTags({ project: projectId });
+    ciTag = (existingTags || []).find(t => t.name === 'CI Imported');
+    if (!ciTag) {
+      ciTag = await testCasesApi.addTags({
+        testCasesTagPayload: { name: 'CI Imported', project: projectId }
+      });
+    }
+    console.log(`   ✓ Tag "CI Imported" (id: ${ciTag.id})`);
   }
-  console.log(`   ✓ Tag "CI Imported" (id: ${ciTag.id})`);
 
   // 3. Fetch all existing suites
-  const existingSuites = await suitesApi.getAllSuites({ project: projectId });
+  const existingSuites = ciTag ? await suitesApi.getAllSuites({ project: projectId }) : [];
   const suiteCache = [...(existingSuites || [])];
 
   // 4. Build suite hierarchy by path
@@ -1526,9 +1551,14 @@ async function autoCreateTestPlan({ apiKey, apiUrl, projectId, parsedReport, bui
     return [t.suite || ''];
   };
 
+  // TCV-7028: a test already matched to a synced case needs no suite of its own —
+  // it lives in the tree `tc sync` built, and mirroring its path here would leave
+  // an empty copy of that tree behind.
+  const testsNeedingSuites = allTests.filter(t => !t.bddCaseId);
+
   const seenPathKeys = new Set();
   const uniquePaths = [];
-  for (const t of allTests) {
+  for (const t of testsNeedingSuites) {
     const path = getTestSuitePath(t);
     for (let i = 1; i <= path.length; i++) {
       const prefix = path.slice(0, i);
@@ -1550,7 +1580,7 @@ async function autoCreateTestPlan({ apiKey, apiUrl, projectId, parsedReport, bui
     const parentId = parentSuite ? parentSuite.id : 0;
 
     let suiteObj = suiteCache.find(s =>
-      s.title === humanized && Number(s.parentId || 0) === Number(parentId)
+      !s.isBddManaged && s.title === humanized && Number(s.parentId || 0) === Number(parentId)
     );
     if (!suiteObj) {
       suiteObj = await suitesApi.addSuite({
@@ -1582,35 +1612,38 @@ async function autoCreateTestPlan({ apiKey, apiUrl, projectId, parsedReport, bui
   // direct fetch with the suite query parameter instead.
   const testCasesBySuite = {};
   const leafSuiteIds = new Set();
-  for (const t of allTests) {
+  for (const t of testsNeedingSuites) {
     const s = resolveSuiteForTest(t);
     if (s && s.id != null) {
       leafSuiteIds.add(s.id);
     }
   }
   for (const suiteId of leafSuiteIds) {
-    const url = `${effectiveApiUrl}/testcases?project=${projectId}&suite=${suiteId}&_limit=-1&token=${encodeURIComponent(apiKey)}`;
-    const resp = await fetch(url);
-    if (!resp.ok) {
-      const body = await resp.text().catch(() => '');
-      throw new Error(`Failed to fetch test cases for suite ${suiteId}: HTTP ${resp.status} ${body}`);
-    }
-    const cases = await resp.json();
-    testCasesBySuite[suiteId] = cases || [];
+    testCasesBySuite[suiteId] = await fetchSuiteCases({ baseApiUrl: effectiveApiUrl, apiKey, projectId, suiteId });
   }
 
   // 6. For each test: match by ID or title, create if needed, ensure tag
   let matchedByIdCount = 0;
   let matchedByTitleCount = 0;
   let createdCount = 0;
+  const bddCaseIds = [];
 
   for (const test of allTests) {
+    // TCV-7028: the sync owns this case. It is not tagged (the API refuses every
+    // edit of a BDD managed case, and that refusal is what used to make this
+    // function create a second copy of the scenario) — it is added to the plan by id.
+    if (test.bddCaseId) {
+      bddCaseIds.push(Number(test.bddCaseId));
+      continue;
+    }
+
     const targetSuite = resolveSuiteForTest(test);
 
     if (test.tcId) {
       // Has TC ID — verify it exists and ensure tag
       try {
-        const existingCase = await testCasesApi.getTestCase({ id: Number(test.tcId) });
+        const existingCase = existingCasesById.get(test.tcId);
+        if (!existingCase) test.tcId = null;
         if (existingCase && existingCase.id) {
           const existingTagIds = (existingCase.tags || []).map(t => typeof t === 'object' ? t.id : t);
           if (!existingTagIds.includes(ciTag.id)) {
@@ -1637,7 +1670,7 @@ async function autoCreateTestPlan({ apiKey, apiUrl, projectId, parsedReport, bui
       // No TC ID — search by normalized title within the suite
       const normalizedTestTitle = normalizeTitle(test.title);
       const suiteCases = testCasesBySuite[targetSuite.id] || [];
-      const match = suiteCases.find(c => normalizeTitle(c.title) === normalizedTestTitle);
+      const match = suiteCases.find(c => !c.isBddManaged && !c.archived && normalizeTitle(c.title) === normalizedTestTitle);
 
       if (match) {
         test.tcId = String(match.id);
@@ -1675,11 +1708,12 @@ async function autoCreateTestPlan({ apiKey, apiUrl, projectId, parsedReport, bui
       }
     }
   }
-  console.log(`   ✓ ${matchedByIdCount} matched by ID, ${matchedByTitleCount} matched by title, ${createdCount} created new`);
+  const bddNote = bddCaseIds.length ? `, ${unique(bddCaseIds).length} matched to BDD-synced cases` : '';
+  console.log(`   ✓ ${matchedByIdCount} matched by ID, ${matchedByTitleCount} matched by title, ${createdCount} created new${bddNote}`);
 
   // 7. Rebuild resultsToUpload from enriched allTests
   const newResultsToUpload = {};
-  for (const test of allTests) {
+  for (const test of rollUpBddResults(allTests)) {
     if (!test.tcId) continue;
     const key = test.configId || '0';
     if (!newResultsToUpload[key]) {
@@ -1695,7 +1729,8 @@ async function autoCreateTestPlan({ apiKey, apiUrl, projectId, parsedReport, bui
     });
   }
   parsedReport.resultsToUpload = newResultsToUpload;
-  parsedReport.unresolvedIds = [];
+  parsedReport.unresolvedIds = unique(parsedReport.allTests.filter(test => !test.tcId || test.bddUnmatchedReason).map(test => test.title));
+  parsedReport.hasConfig = allTests.some(test => test.configId && String(test.configId) !== '0');
 
   // 8. Find or create "CI" test plan folder
   const existingFolders = await foldersApi.getTestPlanFolders({ project: projectId, limit: -1 });
@@ -1752,23 +1787,45 @@ async function autoCreateTestPlan({ apiKey, apiUrl, projectId, parsedReport, bui
   console.log(`   ✓ Test Plan "${planTitle}" (id: ${newPlan.id}${buildNote})`);
 
   // 10. Bulk-add test cases by tag
-  const addResult = await testPlanCasesApi.bulkAddTestPlanTestCases({
-    testPlanTestCaseBulkAddPayload: {
-      testplan: newPlan.id,
-      testCaseCollection: {
-        testCases: [],
-        selector: [
-          {
-            field: 'tags',
-            operator: 'jsonstring_2',
-            value: `{"filter":[[${ciTag.id}]],"type":"equals","filterType":"number"}`
-          }
-        ]
+  // TCV-7028: the selector call has to come first. bulkAdd reads the selector only
+  // while the plan is still empty, so adding the synced cases by id before it would
+  // leave the tagged ones out.
+  const taggedCaseCount = allTests.filter(t => t.tcId && !t.bddCaseId).length;
+  if (taggedCaseCount) {
+    const addResult = await testPlanCasesApi.bulkAddTestPlanTestCases({
+      testPlanTestCaseBulkAddPayload: {
+        testplan: newPlan.id,
+        testCaseCollection: {
+          testCases: [],
+          selector: [
+            {
+              field: 'tags',
+              operator: 'jsonstring_2',
+              value: `{"filter":[[${ciTag.id}]],"type":"equals","filterType":"number"}`
+            }
+          ]
+        }
       }
+    });
+    if (addResult && addResult.status === false) {
+      throw new Error('Failed to add test cases to the test plan');
     }
-  });
-  if (addResult && addResult.status === false) {
-    throw new Error('Failed to add test cases to the test plan');
+  }
+
+  // TCV-7028: the synced cases carry no CI tag, so no selector can reach them.
+  if (bddCaseIds.length) {
+    const bddAddResult = await testPlanCasesApi.bulkAddTestPlanTestCases({
+      testPlanTestCaseBulkAddPayload: {
+        testplan: newPlan.id,
+        testCaseCollection: {
+          testCases: unique(bddCaseIds),
+          selector: []
+        }
+      }
+    });
+    if (bddAddResult && bddAddResult.status === false) {
+      throw new Error('Failed to add the BDD-synced test cases to the test plan');
+    }
   }
 
   // 11. Assign to current user
@@ -1789,12 +1846,47 @@ async function autoCreateTestPlan({ apiKey, apiUrl, projectId, parsedReport, bui
     }
   });
 
-  const totalCases = allTests.filter(t => t.tcId).length;
+  const totalCases = unique(allTests.filter(t => t.tcId).map(t => t.tcId)).length;
   console.log(`   ✓ ${totalCases} test cases added and assigned to ${currentUser.firstName || currentUser.email}`);
 
   // TCV-6814: the resolved build travels back so each result's provenance can name
   // the exact version it was produced against.
   return { testPlanId: newPlan.id, buildId: build && build.id ? build.id : null };
+}
+
+/**
+ * TCV-7028: put the newly matched results into the upload set, and stop counting
+ * them as missing an id. Only the matched records are added, so the records the
+ * parser already built keep the titles it gave them.
+ */
+export function addBddMatchesToUpload(parsedReport) {
+  for (const test of rollUpBddResults(parsedReport.allTests.filter(test => test.bddCaseId || test.matchedCaseId))) {
+
+    const configId = test.configId ? String(test.configId) : '0';
+    if (!parsedReport.resultsToUpload[configId]) {
+      parsedReport.resultsToUpload[configId] = [];
+    }
+    parsedReport.resultsToUpload[configId].push({
+      tcId: String(test.tcId),
+      status: test.status,
+      errDetails: test.errDetails,
+      title: test.title,
+      duration: test.duration,
+      attachmentPaths: test.attachmentPaths
+    });
+  }
+
+  // The unresolved list is deduplicated by title, so a title only leaves it once no
+  // test still reports under it without an id.
+  const stillUnresolved = new Set(parsedReport.allTests.filter(test => !test.tcId).map(test => test.title));
+  parsedReport.unresolvedIds = (parsedReport.unresolvedIds || []).filter(title => stillUnresolved.has(title));
+  parsedReport.hasConfig = parsedReport.allTests.some(test => test.tcId && test.configId && String(test.configId) !== '0');
+}
+
+function logBddUnmatched(parsedReport) {
+  for (const test of parsedReport.allTests.filter(test => test.bddUnmatchedReason)) {
+    console.warn(`⚠️  Unmatched result: ${featureTitle(test)} / ${test.title} (${test.bddUnmatchedReason}); skipped`);
+  }
 }
 
 export async function report(options) {
@@ -1902,6 +1994,22 @@ export async function report(options) {
       `ℹ️  Parsed ${formatLabel} (${stats.tests} tests: ${stats.passes} passed, ${stats.failures} failed, ${stats.skipped} skipped)`
     );
 
+    // TCV-7028: results from a synced .feature file carry no TestCollab id, so what
+    // ties them to a test case is the feature title and the scenario title. This runs
+    // before --auto-create so a synced case is matched rather than copied.
+    const bddMatched = await matchBddSyncedCases({
+      baseApiUrl: getBaseApiUrl(apiUrl),
+      apiKey: String(apiKey),
+      projectId: parsedProjectId,
+      allTests: parsedReport.allTests,
+      humanizeSuiteName,
+      matchUnmanaged: !autoCreate
+    });
+    if (bddMatched) {
+      console.log(`🥒 ${bddMatched} result(s) matched to BDD-synced test case(s) by feature and scenario title`);
+    }
+    addBddMatchesToUpload(parsedReport);
+
     // Auto-create mode: create all missing resources
     let effectiveTestPlanId = parsedTestPlanId;
     let resolvedBuildId = null;
@@ -1914,6 +2022,11 @@ export async function report(options) {
         buildRef: build,
         environment
       });
+      if (!autoResult) {
+        console.log('No matched cases to report; no test plan created.');
+        logBddUnmatched(parsedReport);
+        return;
+      }
       effectiveTestPlanId = autoResult.testPlanId;
       resolvedBuildId = autoResult.buildId || null;
     }
@@ -1951,6 +2064,7 @@ export async function report(options) {
     });
 
     logUploadSummary(normalizedFormat === 'junit' ? 'JUnit' : 'Mochawesome', summary);
+    logBddUnmatched(parsedReport);
   } catch (err) {
     // TCV-6489: The SDK throws raw Response objects on non-2xx status codes,
     // which stringify as "[object Response]". Extract the actual error details.

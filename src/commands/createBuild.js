@@ -29,9 +29,8 @@ import fs from 'fs';
 
 import { applyCiEnvironment } from '../utils/ciEnvironment.js';
 
-// Builds shipped after the last `testcollab-sdk` release and its generated
-// payload serializers drop keys they do not know, so these calls are made
-// directly against the REST API (same `?token=` auth the other commands use).
+// These calls stay on the REST API because generated payload serializers drop
+// keys they do not know (using the same `?token=` auth as the other commands).
 function buildUrl(baseApiUrl, endpoint, token) {
   const normalized = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
   const separator = normalized.includes('?') ? '&' : '?';

@@ -66,6 +66,12 @@ Auto-create handles mixed results seamlessly. If some tests have TC IDs and othe
 - Tests with `[TC-42]` in the name → matched by ID
 - Tests without IDs → matched by title within the same suite, or created new
 
+### Features managed by `tc sync`
+
+An ID marker wins first. Otherwise a raw classname matching a synced feature is resolved against that feature's cases before any suite or case is created. Matched cases go into the plan by ID, without a `CI Imported` tag. An unsynced scenario or ambiguous title is listed as unmatched and skipped; it never creates a duplicate. Archived cases cannot enter a new plan.
+
+Scenario Outline rows roll up to one case result per configuration, failed if any row failed. The synced dataset is unchanged. If every result belongs to synced features, the plan contains only the matched cases. If none match, no empty plan is created. See the [BDD matching rules](../README.md#bdd-results-from-synced-feature-files).
+
 ## What Gets Created
 
 | Resource | Name | When Created |

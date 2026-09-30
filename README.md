@@ -395,7 +395,7 @@ tc report \
 
 #### Mapping test cases
 
-When using `--test-plan-id` (not `--auto-create`), your test names must include a TestCollab case ID so results can be matched. Any of these patterns work:
+TestCollab ID markers take precedence over title matching in either reporting mode. Any of these patterns work:
 
 ```
 [TC-123] Login should succeed          ← bracketed
@@ -410,7 +410,27 @@ A marker always wins over the trailing-number form, so `[TC-1730] ... and UTF-8`
 (`checkout-42`, `login-flow-123`); a name that merely ends in a hyphenated number, such as
 `Digest uses SHA-256`, carries no ID and needs an explicit marker.
 
-When using `--auto-create`, IDs are optional — tests without IDs are matched by title or created automatically.
+Without IDs, results match existing cases by suite and scenario title. `--test-plan-id` only reports to cases already assigned in that plan. `--auto-create` can create unmatched cases outside synced BDD features.
+
+#### BDD: results from synced `.feature` files
+
+If your Gherkin feature files are synced into TestCollab with [`tc sync`](#tc-sync), your scenarios need **no ID at all**. A Cucumber report already names the feature and the scenario it ran, and that is the pair `tc sync` stored — the feature as a test suite, the scenario as a test case under it. `tc report` resolves a result with no ID marker against those cases:
+
+```xml
+<testcase classname="User login" name="Valid password signs in" />
+             ↑ the Feature: title        ↑ the Scenario: title
+```
+
+- An ID marker wins first. Otherwise the raw JUnit `classname` must exactly equal a synced feature title, including case and spacing. Scenario titles ignore case and extra spacing. Directory containers created by sync are not feature suites.
+- If a feature is synced but a scenario is not, the summary lists it as unmatched and creates nothing. Run `tc sync` on the same commit that ran the tests before reporting.
+- Duplicate feature titles or ambiguous scenario matches produce a warning and are skipped. The command still exits successfully so a later `tc gate` can run.
+- With `--auto-create`, a matched scenario is added to the generated plan as it is: nothing is tagged, no suite tree is copied, and no second case is created.
+- Other classnames use the normal humanized suite/title matching and, with `--auto-create`, creation. A project can contain both synced Cucumber features and other tests.
+- If every auto-create result is unmatched or ambiguous, no empty plan is created. A lookup error stops reporting before it can create duplicate cases.
+
+**Scenario Outlines:** expanded row names and the current Cucumber JS/JVM `Outline - Examples - #table.row` form match the outline, including titles containing `{{parameter}}` after sync. Rows roll up to one result per case and configuration: any failure makes the result failed; otherwise a skipped row makes it skipped. Durations are summed and failure details and attachments are retained. The dataset is unchanged; individual dataset-row results are not reported separately.
+
+A renamed feature file still matches after syncing because the feature title identifies it. Archived cases are excluded from title matching and from auto-created plans.
 
 #### Configuration-specific runs
 
@@ -550,9 +570,21 @@ tc sync --project <id> [--api-key <key>] [--api-url <url>]
 
 1. Detects which `.feature` files changed since the last sync (using `git diff`)
 2. Parses the Gherkin and calculates content hashes
-3. Sends only the changes to TestCollab (creates, updates, renames, or deletes)
+3. Sends only the changes to TestCollab (creates, updates, renames, archives or restores)
 
 Only **committed** files are synced. Uncommitted changes are ignored (with a warning).
+
+A step's data table or doc string is synced with the step: the table shows as a table and the text block as a preformatted block, under the step or expected result that line belongs to. A background table appears on every case of the feature. A case synced by an older CLI gets its tables the next time its `.feature` file changes.
+
+A `Scenario Outline` becomes one test case with a linked **test dataset** built from its `Examples:` table, so a test plan runs it once per example row. Each `<name>` in its title and steps becomes `{{name}}`, and a test run fills the steps in from the dataset row. Several `Examples:` blocks go into one dataset. The dataset belongs to the sync: change the `Examples:` table in the `.feature` file, not the dataset in TestCollab, because the next sync of the scenario writes the table back. Test datasets need the Elite or Enterprise plan; on other plans the outline is synced without one and the sync reports a warning. An outline synced by an older CLI gets its dataset the next time its `.feature` file changes.
+
+A scenario removed from its `.feature` file archives its test case instead of deleting it. The case leaves the test case list and cannot be added to a new test plan, but it keeps its revisions, runs and results, and TestCollab marks it **Removed from repository**. A deleted `.feature` file archives the cases of all its scenarios, and its suite stays to hold them. When a scenario comes back with the same steps in the same file, the next sync restores the same test case instead of creating a new one; this also works for a deleted file that comes back. A scenario that comes back with other steps is a new scenario and gets a new test case. The repository owns these cases, so they cannot be restored or deleted by hand.
+
+Each scenario is its own test case, also when two scenarios of one file have the same steps: a rename, an edit or a removal changes only that scenario's case, with its own title, tags, examples and history. Scenarios with the same steps **and** the same title can only be told apart by their order, so each keeps the case of its position in the file, and the sync prints a warning. Give them different titles, or moving one above the other swaps their test cases.
+
+Scenarios under a `Rule:` heading sync into the feature's suite like any other scenario; a rule adds no suite. Their steps start with the feature background, then the rule's background. They inherit the rule's tags, and their description names the rule (`Rule: <rule text>`). A feature synced by an older CLI gets its rule scenarios the next time its `.feature` file changes.
+
+Once a feature is synced, the results of running it report straight back into the same test cases — no TestCollab ID in the `.feature` file. See [BDD: results from synced `.feature` files](#bdd-results-from-synced-feature-files).
 
 #### Example output
 

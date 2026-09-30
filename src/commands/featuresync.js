@@ -22,6 +22,11 @@ import fs from 'fs';
 // Enable extra debug logs by setting BDD_SYNC_DEBUG=1
 const DEBUG_BDD_SYNC = process.env.BDD_SYNC_DEBUG === '1';
 
+// TCV-7031: the TestCollab step view styles a synced data table and doc string
+// by these class names.
+const DATA_TABLE_CLASS = 'bdd-data-table';
+const DOC_STRING_CLASS = 'bdd-doc-string';
+
 /**
  * Main featuresync command handler
  * @param {Object} options - Command options from commander
@@ -346,6 +351,89 @@ function extractBackgroundText(content) {
 }
 
 /**
+ * TCV-7031: a step as it is sent to TestCollab — the keyword and step line,
+ * followed by the step's data table or doc string. The API sorts steps from
+ * expected results line by line, so everything a step carries stays on its
+ * one line: rows become HTML table rows and line breaks become <br>.
+ *
+ * The hashes do not use this. They stay on keyword + step line, so a case
+ * synced before tables were sent keeps its hash and is not created again.
+ *
+ * TCV-6057: `parameters` are a Scenario Outline's Examples columns. Each
+ * <name> in the step line, a table cell or the doc string becomes {{name}},
+ * the reference TestCollab fills from the linked test dataset. It is replaced
+ * before escaping, so the HTML the step is wrapped in is never touched.
+ */
+function formatStep(step, parameters = []) {
+  const withParameters = text => toDatasetReferences(text, parameters);
+  return `${step.keyword}${withParameters(step.text)}${formatStepArgument(step, withParameters)}`;
+}
+
+function formatStepArgument(step, withParameters) {
+  if (step.dataTable) {
+    const rows = step.dataTable.rows.map(row =>
+      `<tr>${row.cells.map(cell => `<td>${escapeStepHtml(withParameters(cell.value))}</td>`).join('')}</tr>`
+    );
+    return `<table class="${DATA_TABLE_CLASS}"><tbody>${rows.join('')}</tbody></table>`;
+  }
+  if (step.docString) {
+    return `<pre class="${DOC_STRING_CLASS}">${escapeStepHtml(withParameters(step.docString.content))}</pre>`;
+  }
+  return '';
+}
+
+// TCV-6057: Cucumber puts the Examples value where <name> is; TestCollab puts the dataset value where {{name}} is
+function toDatasetReferences(text, parameters) {
+  return parameters.reduce((result, name) => result.split(`<${name}>`).join(`{{${name}}}`), text);
+}
+
+/**
+ * TCV-6057: a Scenario Outline's Examples tables, as one table for a TestCollab
+ * test dataset. A test case holds one dataset, so every Examples block goes
+ * into it: the columns in the order they first appear, one row per example
+ * row, and an empty value where a block has no such column. Null when there
+ * is no column or no row, so a plain Scenario sends nothing.
+ */
+function extractExamples(scenario) {
+  const parameters = [];
+  const valuesByRow = [];
+  for (const block of scenario.examples || []) {
+    if (!block.tableHeader) {
+      continue;
+    }
+    const header = block.tableHeader.cells.map(cell => cell.value);
+    header.filter(Boolean).forEach(name => {
+      if (!parameters.includes(name)) {
+        parameters.push(name);
+      }
+    });
+    for (const row of block.tableBody || []) {
+      const values = new Map();
+      row.cells.forEach((cell, index) => {
+        values.set(header[index], cell.value);
+      });
+      valuesByRow.push(values);
+    }
+  }
+  if (parameters.length === 0 || valuesByRow.length === 0) {
+    return null;
+  }
+  return {
+    parameters,
+    rows: valuesByRow.map(values => parameters.map(name => (values.has(name) ? values.get(name) : '')))
+  };
+}
+
+// Cell and doc string text is shown as written, never read as markup.
+function escapeStepHtml(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\r\n|\r|\n/g, '<br>');
+}
+
+/**
  * Parse a Gherkin file and extract structured data
  */
 function parseGherkinFile(content, filePath) {
@@ -366,39 +454,43 @@ function parseGherkinFile(content, filePath) {
     const feature = gherkinDocument.feature;
     const scenarios = [];
     let background = null;
-    
-    // Extract feature description text that appears between Feature: and Background/Scenario
-    const featureDescription = extractFeatureDescription(content);
-  const backgroundText = extractBackgroundText(content);
-    
+    // TCV-6912: scenarios written under a Rule: heading
+    const ruleScenarios = [];
+    // TCV-7053: Cucumber applies Feature tags to every scenario in the file.
+    const featureTags = tagNames(feature.tags);
+
+    // TCV-6912 / TCV-6202: the line-based extractors below read on to the next Scenario:
+    // heading, so they took in what is written above it: a rule, and the first scenario's
+    // tags, which became part of the feature description or of the background text the
+    // server writes as the case description. So each one gets only its own block, which
+    // ends where the next child starts, tags included. A background is always the first child.
+    const [firstChild, secondChild] = feature.children || [];
+    const featureDescription = extractFeatureDescription(linesBetween(content, 1, startOfChild(content, firstChild)));
+    const backgroundText = firstChild && firstChild.background
+      ? extractBackgroundText(linesBetween(content, firstChild.background.location.line, startOfChild(content, secondChild)))
+      : [];
+
     // Process children to find scenarios and background
     for (const child of feature.children || []) {
       if (child.scenario) {
-        const scenario = child.scenario;
-        const steps = scenario.steps || [];
-        const stepsText = steps.map(step => `${step.keyword}${step.text}`).join('\n');
-        const scenarioTags = (scenario.tags || [])
-          .map(tag => (tag.name || '').trim())
-          .filter(Boolean)
-          .map(tagName => (tagName.startsWith('@') ? tagName.slice(1) : tagName));
-        const normalizedSteps = steps.map(step => `${step.keyword}${step.text}`);
-        
-        scenarios.push({
-          hash: calculateHash(stepsText, filePath),
-          title: scenario.name,
-          steps: normalizedSteps,
-          tags: scenarioTags
-        });
+        scenarios.push(toSyncScenario(child.scenario, filePath, featureTags));
       } else if (child.background) {
         // Background is in children, not directly on feature
         background = child.background;
+      } else if (child.rule) {
+        ruleScenarios.push(...parseRule(child.rule, content, filePath, featureTags));
       }
     }
     
     // Calculate feature hash based on description + background + all scenario steps
+    // TCV-6912 / TCV-6202: this stays what older CLIs hashed, the whole-file description
+    // (with the rule or scenario tags it read on into) and the top-level scenarios only.
+    // The suite they created is found by that hash, so changing it would lose the suite
+    // on the next sync.
+    const hashedDescription = extractFeatureDescription(content);
     let featureContent = '';
-    if (featureDescription) {
-      featureContent += featureDescription + '\n';
+    if (hashedDescription) {
+      featureContent += hashedDescription + '\n';
     }
     if (background) {
       const bgSteps = background.steps || [];
@@ -410,15 +502,113 @@ function parseGherkinFile(content, filePath) {
       feature: {
         name: feature.name,
       FeatureDescription: featureDescription || '',
-      background: background ? background.steps.map(step => `${step.keyword}${step.text}`) : undefined,
+      // TCV-7031: a background table reaches every case of the feature
+      background: background ? background.steps.map(step => formatStep(step)) : undefined,
       backgroundText: backgroundText && backgroundText.length > 0 ? backgroundText : undefined
       },
       featureHash: calculateHash(featureContent, filePath),
-      scenarios
+      scenarios: scenarios.concat(ruleScenarios)
     };
   } catch (error) {
     throw new Error(`Failed to parse Gherkin file: ${error.message}`);
   }
+}
+
+/**
+ * A scenario as it is sent to TestCollab. TCV-6912: top-level scenarios and scenarios
+ * under a Rule: both go through here, so a Scenario Outline is read the same way in both.
+ */
+function toSyncScenario(scenario, filePath, inheritedTags) {
+  const steps = scenario.steps || [];
+  const stepsText = steps.map(step => `${step.keyword}${step.text}`).join('\n');
+  // TCV-6057: a Scenario Outline's Examples become a test dataset its steps reference
+  const examples = extractExamples(scenario);
+  // TCV-7031: send the step's data table / doc string too; stepsText, the hash input, leaves them out
+  const normalizedSteps = steps.map(step => formatStep(step, examples ? examples.parameters : []));
+
+  return {
+    hash: calculateHash(stepsText, filePath),
+    // TCV-6057: the title's <name> too. The server strips anything tag-like from a new
+    // case's title, so "Return after <days> days" would be stored as "Return after  days".
+    title: examples ? toDatasetReferences(scenario.name, examples.parameters) : scenario.name,
+    steps: normalizedSteps,
+    tags: (inheritedTags || []).concat(tagNames(scenario.tags)),
+    examples
+  };
+}
+
+function tagNames(tags) {
+  return (tags || [])
+    .map(tag => (tag.name || '').trim())
+    .filter(Boolean)
+    .map(tagName => (tagName.startsWith('@') ? tagName.slice(1) : tagName));
+}
+
+/**
+ * TCV-6912: the scenarios under a Rule: heading. A rule creates no suite, so its
+ * scenarios sync into the feature suite like any other scenario. The rule's background
+ * steps go ahead of each scenario's own steps (the server puts the feature background
+ * ahead of both), and the rule's tags ahead of its own tags, as Cucumber inherits them.
+ *
+ * The rule itself travels in `rule`, from which the server writes the case description.
+ * The hash stays on the scenario's own steps, so a scenario moved to another rule of the
+ * same file updates its case.
+ */
+function parseRule(rule, content, filePath, featureTags) {
+  let background = null;
+  const scenarios = [];
+  for (const child of rule.children || []) {
+    if (child.background) {
+      background = child.background;
+    } else if (child.scenario) {
+      scenarios.push(child.scenario);
+    }
+  }
+  if (scenarios.length === 0) {
+    return [];
+  }
+
+  const syncRule = { title: rule.name };
+  if (background) {
+    // Read like the feature background text: the lines of the block, up to the first scenario
+    const backgroundText = extractBackgroundText(
+      linesBetween(content, background.location.line, firstLineOf(scenarios[0]))
+    );
+    if (backgroundText.length > 0) {
+      syncRule.backgroundText = backgroundText;
+    }
+  }
+  // Not rewritten for an outline's Examples, like the feature background (TCV-6057)
+  const backgroundSteps = background ? background.steps.map(step => formatStep(step)) : [];
+  const inheritedTags = (featureTags || []).concat(tagNames(rule.tags));
+
+  return scenarios.map(scenario => {
+    const synced = toSyncScenario(scenario, filePath, inheritedTags);
+    return {
+      ...synced,
+      steps: backgroundSteps.concat(synced.steps),
+      rule: syncRule
+    };
+  });
+}
+
+// TCV-6912: the line a rule or scenario starts on, counting the tags written above it
+function firstLineOf(node) {
+  return Math.min(node.location.line, ...(node.tags || []).map(tag => tag.location.line));
+}
+
+// TCV-6202: the line a feature child (background, scenario or rule) starts on, counting its
+// tags; the line after the last one when there is no such child
+function startOfChild(content, child) {
+  if (!child) {
+    return content.split('\n').length + 1;
+  }
+  return firstLineOf(child.background || child.scenario || child.rule);
+}
+
+// TCV-6912: lines fromLine up to, not including, toLine; numbered from 1 as Gherkin does
+function linesBetween(content, fromLine, toLine) {
+  return content.split('\n').slice(fromLine - 1, toLine - 1).join('\n');
 }
 
 /**
@@ -466,7 +656,9 @@ async function resolveIds(projectId, hashes, apiUrl, token) {
     const results = responseData.results || {};
     return {
       suites: results.suites || {},
-      cases: results.cases || {}
+      cases: results.cases || {},
+      // TCV-7036: every live case of each hash; an older API does not send it
+      caseLists: results.caseLists
     };
   } catch (error) {
     throw new Error(`Failed to resolve IDs: ${error.message}`);
@@ -519,48 +711,37 @@ function buildSyncPayload(projectId, prevCommit, headCommit, changes, resolvedId
       }
     }
     
-    if (change.scenarios) {
-      // Build helper sets/maps for robust mapping
-      const oldHashesSet = new Set(change.oldScenarioHashes || []);
-      const oldTitleToHash = new Map((change.oldScenarios || []).map(s => [s.title, s.hash]));
-      const sameLengthAsOld = !!change.oldScenarioHashes && change.oldScenarioHashes.length === change.scenarios.length;
+    // TCV-7036: the old scenario each scenario continues, one to one, and each old scenario's case
+    const oldScenarios = change.oldScenarios || [];
+    const match = matchScenarios(change.scenarios || [], oldScenarios, resolvedIds);
 
+    if (change.scenarios) {
       payloadChange.scenarios = change.scenarios.map((scenario, index) => {
         const payloadScenario = {
           hash: scenario.hash,
           title: scenario.title
         };
 
-        if (scenario.tags && scenario.tags.length > 0) {
+        // TCV-7053: an empty list on a changed file tells the API to remove the
+        // final inherited tag. Omitting the field means "leave tags unchanged".
+        if (Array.isArray(scenario.tags) && (scenario.tags.length > 0 || change.status !== 'A')) {
           payloadScenario.tags = scenario.tags;
         }
         
-        // Determine prevHash robustly:
-        // 1) If steps unchanged, new hash equals some old hash → use that
-        if (oldHashesSet.has(scenario.hash)) {
-          payloadScenario.prevHash = scenario.hash;
-          if (DEBUG_BDD_SYNC) {
-            console.log(`     · mapping by steps-hash equality`);
-          }
-        } else if (oldTitleToHash.has(scenario.title)) {
-          // 2) Title unchanged → use old hash by title
-          payloadScenario.prevHash = oldTitleToHash.get(scenario.title);
-          if (DEBUG_BDD_SYNC) {
-            console.log(`     · mapping by title match`);
-          }
-        } else if (sameLengthAsOld && change.oldScenarioHashes && change.oldScenarioHashes[index]) {
-          // 3) Fallback: index mapping only when counts are equal
-          payloadScenario.prevHash = change.oldScenarioHashes[index];
-          if (DEBUG_BDD_SYNC) {
-            console.log(`     · mapping by index fallback`);
-          }
+        // TCV-6912: the rule the scenario sits under, for its case description
+        if (scenario.rule) {
+          payloadScenario.rule = scenario.rule;
         }
         
-        // Add caseId if this is an update to existing scenario (use prevHash to look up)
-        if (payloadScenario.prevHash) {
-          const caseInfo = resolvedIds.cases[payloadScenario.prevHash];
-          if (caseInfo && caseInfo.caseId) {
-            payloadScenario.caseId = caseInfo.caseId;
+        // The old scenario this one continues (see matchScenarios), and its case
+        const oldIndex = match.oldIndexOf[index];
+        if (oldIndex !== -1) {
+          payloadScenario.prevHash = oldScenarios[oldIndex].hash;
+          if (match.caseIds[oldIndex]) {
+            payloadScenario.caseId = match.caseIds[oldIndex];
+          }
+          if (DEBUG_BDD_SYNC) {
+            console.log(`     · mapping by ${match.reasons[index]}`);
           }
         }
         
@@ -573,14 +754,19 @@ function buildSyncPayload(projectId, prevCommit, headCommit, changes, resolvedId
         
         if (shouldIncludeSteps) {
           payloadScenario.steps = scenario.steps;
+          // TCV-6057: the Examples table travels with the steps that reference it
+          if (scenario.examples) {
+            payloadScenario.examples = scenario.examples;
+          }
         }
-        
+
         if (DEBUG_BDD_SYNC) {
           console.log(`   • scenario[${index}] title="${scenario.title}"`);
           console.log(`     - prevHash: ${payloadScenario.prevHash || 'none'}`);
           console.log(`     - caseId: ${payloadScenario.caseId || 'none'}`);
           console.log(`     - newHash: ${payloadScenario.hash}`);
           console.log(`     - stepsIncluded: ${shouldIncludeSteps}`);
+          console.log(`     - examples: ${payloadScenario.examples ? payloadScenario.examples.rows.length + ' row(s)' : 'none'}`);
         }
         
         return payloadScenario;
@@ -592,18 +778,31 @@ function buildSyncPayload(projectId, prevCommit, headCommit, changes, resolvedId
     }
     
     // Include deleted scenarios (present before, missing now)
-    if (change.oldScenarioHashes && change.oldScenarioHashes.length > 0 && change.status !== 'A') {
+    // TCV-7036: an old scenario that no scenario continues. It goes with its case id, because
+    // a hash can stand for several cases. Without one, only when no remaining scenario has
+    // its hash, as before; and never with the case id a remaining scenario sends, which an
+    // API without caseLists gives to every scenario of a shared hash.
+    if (oldScenarios.length > 0 && change.status !== 'A') {
       const existingScenarios = payloadChange.scenarios || [];
       const newHashes = new Set(existingScenarios.map(s => s.hash).filter(Boolean));
       const newPrevHashes = new Set(existingScenarios.map(s => s.prevHash).filter(Boolean));
-      for (const oldHash of change.oldScenarioHashes) {
-        if (!newHashes.has(oldHash) && !newPrevHashes.has(oldHash)) {
-          existingScenarios.push({ prevHash: oldHash, deleted: true });
-          if (DEBUG_BDD_SYNC) {
-            console.log(`   • scenario deleted: prevHash ${oldHash}`);
-          }
+      const newCaseIds = new Set(existingScenarios.map(s => s.caseId).filter(Boolean));
+      oldScenarios.forEach((old, oldIndex) => {
+        if (match.continued.has(oldIndex)) {
+          return;
         }
-      }
+        const caseId = match.caseIds[oldIndex];
+        if (caseId && !newCaseIds.has(caseId)) {
+          existingScenarios.push({ prevHash: old.hash, caseId, deleted: true });
+        } else if (!caseId && !newHashes.has(old.hash) && !newPrevHashes.has(old.hash)) {
+          existingScenarios.push({ prevHash: old.hash, deleted: true });
+        } else {
+          return;
+        }
+        if (DEBUG_BDD_SYNC) {
+          console.log(`   • scenario deleted: prevHash ${old.hash}${caseId ? `, caseId ${caseId}` : ''}`);
+        }
+      });
       if (existingScenarios.length > 0) {
         payloadChange.scenarios = existingScenarios;
         if (DEBUG_BDD_SYNC) {
@@ -625,6 +824,94 @@ function buildSyncPayload(projectId, prevCommit, headCommit, changes, resolvedId
   }
   
   return payload;
+}
+
+// TCV-6912: the title a scenario is matched by. Under a rule it includes the rule title,
+// because the same example title often repeats under several rules of one file.
+function titleInRule(scenario) {
+  return scenario.rule ? `${scenario.rule.title}\n${scenario.title}` : scenario.title;
+}
+
+/**
+ * TCV-7036: which old scenario each scenario of the new file continues, and the test case
+ * of each old scenario. The hash is the file path and the step lines, so scenarios with
+ * the same steps share it: a match is one to one, never two scenarios on one old scenario.
+ * Each pass goes over the scenarios still unmatched, in file order, from the strongest
+ * sign to the weakest: the same steps and title, the same steps, the same title, the same
+ * title under another rule when only one old scenario has it (TCV-6912), and the same
+ * position when the file has as many scenarios as before.
+ */
+function matchScenarios(scenarios, oldScenarios, resolvedIds) {
+  const oldIndexOf = scenarios.map(() => -1);
+  const reasons = scenarios.map(() => null);
+  const continued = new Set();
+  const pass = (reason, fits) => {
+    scenarios.forEach((scenario, index) => {
+      if (oldIndexOf[index] !== -1) {
+        return;
+      }
+      const oldIndex = oldScenarios.findIndex((old, i) => !continued.has(i) && fits(scenario, old, index, i));
+      if (oldIndex !== -1) {
+        oldIndexOf[index] = oldIndex;
+        reasons[index] = reason;
+        continued.add(oldIndex);
+      }
+    });
+  };
+  const oldTitleCount = title => oldScenarios.filter(old => old.title === title).length;
+
+  pass('steps-hash and title equality', (s, old) => s.hash === old.hash && titleInRule(s) === titleInRule(old));
+  pass('steps-hash equality', (s, old) => s.hash === old.hash);
+  pass('title match', (s, old) => titleInRule(s) === titleInRule(old));
+  pass('title match across rules', (s, old) => s.title === old.title && oldTitleCount(old.title) === 1);
+  if (scenarios.length === oldScenarios.length) {
+    pass('index fallback', (s, old, index, oldIndex) => index === oldIndex);
+  }
+
+  return { oldIndexOf, reasons, continued, caseIds: caseOfEachOldScenario(oldScenarios, resolvedIds) };
+}
+
+/**
+ * TCV-7036, TCV-7056: the test case of each old scenario. When the API supplies caseLists,
+ * use its live cases even when only one old scenario has the hash. The legacy cases entry
+ * can point at an archived twin, which would swap the cases when that twin returns. First
+ * each scenario takes the oldest free case with its title, then the rest take the oldest
+ * free cases in file order. An API without caseLists names one case per hash, which then
+ * stands for all of them, as before.
+ */
+function caseOfEachOldScenario(oldScenarios, resolvedIds) {
+  const caseIds = oldScenarios.map(old => {
+    const caseInfo = resolvedIds.cases[old.hash];
+    return caseInfo && caseInfo.caseId ? caseInfo.caseId : undefined;
+  });
+  const caseLists = resolvedIds.caseLists || {};
+  const indexesByHash = new Map();
+  oldScenarios.forEach((old, index) => {
+    indexesByHash.set(old.hash, (indexesByHash.get(old.hash) || []).concat([index]));
+  });
+
+  indexesByHash.forEach((indexes, hash) => {
+    if (!Array.isArray(caseLists[hash])) {
+      return;
+    }
+    const free = caseLists[hash].slice();
+    const shared = new Map();
+    indexes.forEach(index => {
+      const at = free.findIndex(entry => entry.title === oldScenarios[index].title);
+      if (at !== -1) {
+        shared.set(index, free.splice(at, 1)[0].caseId);
+      }
+    });
+    indexes.forEach(index => {
+      if (!shared.has(index) && free.length > 0) {
+        shared.set(index, free.shift().caseId);
+      }
+    });
+    indexes.forEach(index => {
+      caseIds[index] = shared.get(index);
+    });
+  });
+  return caseIds;
 }
 
 /**
@@ -666,40 +953,50 @@ async function syncWithTestCollab(payload, apiUrl, token) {
  * Display sync results to the user
  */
 function displaySyncResults(result) {
+  // TCV-7029: the API answers { success, message, results }; the counts and warnings are in results
+  const counts = result.results || {};
   console.log('\n📊 Synchronization Results:');
   
-  if (result.createdSuites > 0) {
-    console.log(`✨ Created ${result.createdSuites} suite(s)`);
+  if (counts.createdSuites > 0) {
+    console.log(`✨ Created ${counts.createdSuites} suite(s)`);
   }
-  if (result.createdCases > 0) {
-    console.log(`✨ Created ${result.createdCases} test case(s)`);
+  if (counts.createdCases > 0) {
+    console.log(`✨ Created ${counts.createdCases} test case(s)`);
   }
-  if (result.renamedSuites > 0) {
-    console.log(`🔄 Renamed ${result.renamedSuites} suite(s)`);
+  if (counts.renamedSuites > 0) {
+    console.log(`🔄 Renamed ${counts.renamedSuites} suite(s)`);
   }
-  if (result.renamedCases > 0) {
-    console.log(`🔄 Renamed ${result.renamedCases} test case(s)`);
+  if (counts.renamedCases > 0) {
+    console.log(`🔄 Renamed ${counts.renamedCases} test case(s)`);
   }
-  if (result.updatedCases > 0) {
-    console.log(`🔄 Updated ${result.updatedCases} test case(s)`);
+  if (counts.updatedCases > 0) {
+    console.log(`🔄 Updated ${counts.updatedCases} test case(s)`);
   }
-  if (result.deletedSuites > 0) {
-    console.log(`🗑️  Deleted ${result.deletedSuites} suite(s)`);
+  if (counts.deletedSuites > 0) {
+    console.log(`🗑️  Deleted ${counts.deletedSuites} suite(s)`);
   }
-  if (result.deletedCases > 0) {
-    console.log(`🗑️  Deleted ${result.deletedCases} test case(s)`);
+  if (counts.deletedCases > 0) {
+    console.log(`🗑️  Deleted ${counts.deletedCases} test case(s)`);
+  }
+  // TCV-7034: a removed scenario archives its test case, and one that comes back restores it
+  if (counts.archivedCases > 0) {
+    console.log(`🗄️  Archived ${counts.archivedCases} test case(s) whose scenario was removed`);
+  }
+  if (counts.restoredCases > 0) {
+    console.log(`♻️  Restored ${counts.restoredCases} archived test case(s) whose scenario is back`);
   }
   
-  if (result.warnings && result.warnings.length > 0) {
+  if (counts.warnings && counts.warnings.length > 0) {
     console.log('\n⚠️  Warnings:');
-    result.warnings.forEach(warning => console.log(`   ${warning}`));
+    counts.warnings.forEach(warning => console.log(`   ${warning}`));
   }
   
   // Show if no changes were made
-  const totalChanges = (result.createdSuites || 0) + (result.createdCases || 0) + 
-                      (result.renamedSuites || 0) + (result.renamedCases || 0) + 
-                      (result.updatedCases || 0) + (result.deletedSuites || 0) + 
-                      (result.deletedCases || 0);
+  const totalChanges = (counts.createdSuites || 0) + (counts.createdCases || 0) + 
+                      (counts.renamedSuites || 0) + (counts.renamedCases || 0) + 
+                      (counts.updatedCases || 0) + (counts.deletedSuites || 0) + 
+                      (counts.deletedCases || 0) + (counts.archivedCases || 0) + 
+                      (counts.restoredCases || 0);
   
   if (totalChanges === 0) {
     console.log('ℹ️  No changes were required - everything is already in sync');

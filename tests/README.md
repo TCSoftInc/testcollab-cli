@@ -130,7 +130,7 @@ Our tests cover all scenarios documented in `../gherkin-docs/bdd-integration/`:
 
 ### 3. File Deleted (`scenario_3_file_deleted.md`)
 - **Setup**: Previous sync exists, .feature file removed
-- **Expected**: Suite and test cases marked for deletion
+- **Expected**: Test cases archived (TCV-7034); the suite stays
 - **Payload**: Single change with `D` status
 
 ### 4. File Renamed - Content Unchanged (`scenario_4_file_renamed_content_unchanged.md`)
