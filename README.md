@@ -605,7 +605,7 @@ Once a feature is synced, the results of running it report straight back into th
 
 #### Try it with a sample project
 
-Fork [testcollab-bdd-demo](https://github.com/TCSoftInc/testcollab-bdd-demo) and run `tc sync` to see how it works before integrating with your own project.
+Fork [testcollab-bdd-demo-v2](https://github.com/TCSoftInc/testcollab-bdd-demo-v2) to see `tc sync`, Cucumber and `tc report --auto-create` run together in one GitHub Actions job before integrating with your own project.
 
 ---
 
@@ -907,7 +907,7 @@ npx tc sync --project 123
 
 - [TestCollab](https://testcollab.com)
 - [Documentation](https://help.testcollab.com)
-- [Sample BDD project](https://github.com/TCSoftInc/testcollab-bdd-demo)
+- [Sample BDD project](https://github.com/TCSoftInc/testcollab-bdd-demo-v2)
 - [Report a bug](https://github.com/TCSoftInc/testcollab-cli/issues)
 - [Support](mailto:support@testcollab.com)
 
