@@ -24,7 +24,7 @@ const TOOL_NAME = 'tc-cli';
 let cachedVersion;
 
 /** Read our own version from package.json, once. Never throws — provenance is a nicety. */
-function toolVersion() {
+export function toolVersion() {
   if (cachedVersion !== undefined) return cachedVersion;
   try {
     const here = path.dirname(fileURLToPath(import.meta.url));

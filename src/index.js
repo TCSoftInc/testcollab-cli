@@ -15,6 +15,7 @@ import { report } from './commands/report.js';
 import { getTestPlan } from './commands/getTestPlan.js';
 import { gate } from './commands/gate.js';
 import { collectAttachment, reportCase } from './commands/reportCase.js';
+import { toolVersion } from './utils/executionProvenance.js';
 
 // Initialize commanderq
 const program = new Command();
@@ -22,7 +23,9 @@ const program = new Command();
 program
   .name('tc')
   .description('TestCollab CLI - Command-line interface for TestCollab operations')
-  .version('1.0.0')
+  // The installed version, from package.json. The release workflow writes the
+  // tag's version there, so a fixed string here never matched a release.
+  .version(toolVersion())
   // TCV-6794: only treat `tc`'s own options (-V/--version, -h) as such before the
   // subcommand name, so `tc createBuild --version <build version>` reaches the
   // command instead of printing the CLI version. `tc --version` still works.
