@@ -26,6 +26,7 @@ import {
 import { resolveBuild } from '../lib/builds.js';
 import { buildExecutionProvenance } from '../utils/executionProvenance.js';
 import { decodeXmlEntities } from '../lib/xml.js';
+import { redactToken } from '../lib/redact.js';
 import { extractAttachmentPaths, resolveAttachments } from '../lib/attachments.js';
 import { matchBddSyncedCases, normalizeTitle, fetchSuiteCases, rollUpBddResults, featureTitle } from '../lib/bddCases.js';
 
@@ -742,7 +743,7 @@ export class TcApiClient {
     try {
       response = await fetch(this.buildUrl(endpoint), requestOptions);
     } catch (error) {
-      throw new Error(`Failed to call ${endpoint}: ${error?.message || String(error)}`);
+      throw new Error(`Failed to call ${endpoint}: ${redactToken(error?.message || String(error), this.accessToken)}`);
     }
 
     const rawBody = await response.text();

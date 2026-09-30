@@ -28,6 +28,7 @@
 import fs from 'fs';
 
 import { applyCiEnvironment } from '../utils/ciEnvironment.js';
+import { redactToken } from '../lib/redact.js';
 
 // These calls stay on the REST API because generated payload serializers drop
 // keys they do not know (using the same `?token=` auth as the other commands).
@@ -52,7 +53,7 @@ async function apiRequest(baseApiUrl, token, endpoint, options = {}) {
   try {
     response = await fetch(buildUrl(baseApiUrl, endpoint, token), requestOptions);
   } catch (error) {
-    throw new Error(`Failed to call ${endpoint}: ${error?.message || String(error)}`);
+    throw new Error(`Failed to call ${endpoint}: ${redactToken(error?.message || String(error), token)}`);
   }
 
   const rawBody = await response.text();

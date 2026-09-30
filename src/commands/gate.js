@@ -15,6 +15,8 @@
  * Exit codes: 0 = gate passed · 1 = gate failed · 2 = usage / API error.
  */
 
+import { redactToken } from '../lib/redact.js';
+
 // Standard system statuses, in display order. User-defined statuses are appended.
 const SYSTEM_STATUSES = ['unexecuted', 'passed', 'failed', 'skipped', 'blocked'];
 
@@ -44,7 +46,7 @@ async function apiGet(baseApiUrl, token, endpoint) {
       headers: { Accept: 'application/json' }
     });
   } catch (error) {
-    throw new Error(`Failed to call ${endpoint}: ${error?.message || String(error)}`);
+    throw new Error(`Failed to call ${endpoint}: ${redactToken(error?.message || String(error), token)}`);
   }
 
   const rawBody = await response.text();

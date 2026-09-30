@@ -18,6 +18,7 @@ import { createHash } from 'crypto';
 import path from 'path';
 // fs - file
 import fs from 'fs';
+import { redactToken } from '../lib/redact.js';
 
 // Enable extra debug logs by setting BDD_SYNC_DEBUG=1
 const DEBUG_BDD_SYNC = process.env.BDD_SYNC_DEBUG === '1';
@@ -186,8 +187,8 @@ export async function featuresync(options) {
  * Fetch the last synced commit SHA from TestCollab
  */
 async function fetchSyncState(projectId, apiUrl, token) {
+  // The URL carries the API token, so it is never printed
   const url = `${apiUrl}/bdd/sync?project=${projectId}&token=${token}`;
-  console.log(`Fetching sync state from: ${url}`);
   
   try {
     const response = await fetch(url, {
@@ -204,7 +205,7 @@ async function fetchSyncState(projectId, apiUrl, token) {
     const data = await response.json();
     return data.lastSyncedCommit;
   } catch (error) {
-    throw new Error(`Failed to connect to TestCollab API: ${error.message}`);
+    throw new Error(`Failed to connect to TestCollab API: ${redactToken(error.message, token)}`);
   }
 }
 
