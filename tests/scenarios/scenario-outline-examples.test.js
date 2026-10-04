@@ -113,7 +113,10 @@ describe('TCV-6057: Scenario Outline Examples', () => {
       rows: [
         ['valid@example.com', 'correct', 'the dashboard'],
         ['valid@example.com', 'wrong', 'an error banner']
-      ]
+      ],
+      // TCV-7071: each row's #<table>.<row> as Cucumber writes it in a report, and its table name
+      indexes: ['1.1', '1.2'],
+      names: ['', '']
     });
     // Cucumber does not fill a Background from the Examples, so neither does the sync
     expect(change.feature.background).toEqual(['Given the application is running']);
@@ -146,7 +149,9 @@ describe('TCV-6057: Scenario Outline Examples', () => {
         ['title', 'login', '2', ''],
         ['tag', 'regression', '14', 'nightly'],
         ['tag', 'smoke', '3', '']
-      ]
+      ],
+      indexes: ['1.1', '2.1', '2.2'],
+      names: ['Titles', 'Tags', 'Tags']
     });
     expect(scenario.steps).toEqual([
       'When I search the {{field}} for "{{term}}"',
@@ -184,7 +189,7 @@ describe('TCV-6057: Scenario Outline Examples', () => {
       'When I open the directory',
       'Then I see the welcome text<pre class="bdd-doc-string">Welcome {{name}}, you are a {{td}}.</pre>'
     ]);
-    expect(scenario.examples).toEqual({ parameters: ['name', 'td'], rows: [['Aslak', 'admin']] });
+    expect(scenario.examples).toEqual({ parameters: ['name', 'td'], rows: [['Aslak', 'admin']], indexes: ['1.1'], names: [''] });
     expect(scenario.title).toBe('Import a {{td}} user');
   });
 

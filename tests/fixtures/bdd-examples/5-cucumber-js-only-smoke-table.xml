@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<testsuite name="Cucumber" time="0.004" tests="2" skipped="0" failures="1" errors="0" timestamp="2026-10-04T07:46:28.610Z">
+  <testcase classname="Checkout discount" name="A discount by cart total - Large carts - #2.1" time="0">
+    <system-out><![CDATA[When the cart total is 100..................................................passed
+Then the discount is 10.....................................................passed]]></system-out>
+  </testcase>
+  <testcase classname="Checkout discount" name="A discount by cart total - Large carts - #2.2" time="0.001">
+    <failure type="AssertionError" message="Expected values to be strictly equal:&#xA;&#xA;50 !== 40&#xA;"><![CDATA[AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+50 !== 40
+
+    + expected - actual
+
+    -50
+    +40
+
+    at World.<anonymous> (file:///private/tmp/claude-501/-Users-abhi-Documents-projects-2025-tc-oct-2025/0b2b7076-058d-49ec-951c-bc3f9b207dfd/scratchpad/cucumber-junit-shape/features/steps/steps.js:9:60)]]></failure>
+    <system-out><![CDATA[When the cart total is 500..................................................passed
+Then the discount is 40.....................................................failed]]></system-out>
+  </testcase>
+</testsuite>
