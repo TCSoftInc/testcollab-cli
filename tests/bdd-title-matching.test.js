@@ -136,10 +136,13 @@ it('keeps configurations separate and preserves skipped outlines', () => {
 });
 it('rolls parsed outline rows up in existing-plan upload records', async () => {
   api([suite()], { 11: [testCase(21, 'Pay {{method}}')] });
-  const parsed = parseJUnitReport('<testsuite><testcase classname="Login API" name="Pay &lt;method&gt; - #1.1: Pay visa"><failure message="declined"/></testcase><testcase classname="Login API" name="Pay &lt;method&gt; - #1.2: Pay amex"/></testsuite>');
+  const parsed = parseJUnitReport('<testsuite><testcase classname="Login API" name="Pay &lt;method&gt; - #1.1: Pay visa"><failure><![CDATA[visa declined]]></failure></testcase><testcase classname="Login API" name="Pay &lt;method&gt; - #1.2: Pay amex"><failure><![CDATA[amex declined]]></failure></testcase></testsuite>');
   await matchBddSyncedCases({ ...options, allTests: parsed.allTests });
   addBddMatchesToUpload(parsed);
   expect(parsed.resultsToUpload['0']).toHaveLength(1);
   expect(parsed.resultsToUpload['0'][0].status).toBe(2);
+  expect(parsed.resultsToUpload['0'][0].errDetails).toBe(
+    'Pay <method> - #1.1: Pay visa: visa declined\n\nPay <method> - #1.2: Pay amex: amex declined'
+  );
   expect(parsed.unresolvedIds).toEqual([]);
 });
