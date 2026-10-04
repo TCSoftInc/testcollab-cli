@@ -28,7 +28,7 @@ import { buildExecutionProvenance } from '../utils/executionProvenance.js';
 import { decodeXmlEntities, decodeXmlText } from '../lib/xml.js';
 import { redactToken } from '../lib/redact.js';
 import { extractAttachmentPaths, resolveAttachments } from '../lib/attachments.js';
-import { matchBddSyncedCases, normalizeTitle, fetchSuiteCases, rollUpBddResults, featureTitle } from '../lib/bddCases.js';
+import { matchBddSyncedCases, normalizeTitle, fetchSuiteCases, rollUpBddResults, featureTitle, applyExampleResults } from '../lib/bddCases.js';
 
 // TCV-7028: normalizeTitle moved next to the BDD matching that shares it; it stays
 // exported here because that is where the auto-create title match reads it from.
@@ -892,6 +892,24 @@ export class TcApiClient {
     return [];
   }
 
+  /**
+   * TCV-7071: the project's status order (system name to priority), which decides the
+   * case status of a synced outline whose rows have their own results. Null when it
+   * cannot be read.
+   */
+  async getStatusPriorities() {
+    try {
+      const statuses = await this.request(`/statuses?project=${this.projectId}`);
+      if (Array.isArray(statuses)) {
+        return new Map(statuses.map((status) => [status.system_name, Number(status.priority)]));
+      }
+    } catch {
+      return null;
+    }
+
+    return null;
+  }
+
   async getAssignedCases(testPlanConfigId = null) {
     if (!this.testPlanRun || !this.testPlanRun.id || !this.user || !this.user.id) {
       return [];
@@ -1056,12 +1074,14 @@ function findMatchingExecutedCase(casesAssigned, runRecord, hasConfig, configId)
   });
 }
 
-function buildUpdatePayload({ execCase, projectId, testPlanId, runRecord, configId, hasConfig, provenance }) {
+function buildUpdatePayload({ execCase, projectId, testPlanId, runRecord, configId, hasConfig, provenance, exampleUpdate }) {
+  // TCV-7071: when each Examples row has its own result, the case takes the status of its rows
+  const status = exampleUpdate ? exampleUpdate.status : runRecord.status;
   const payload = {
     id: execCase.id,
     test_plan_test_case: execCase.test_plan_test_case.id,
     project: projectId,
-    status: runRecord.status,
+    status,
     test_plan: testPlanId
   };
 
@@ -1084,8 +1104,13 @@ function buildUpdatePayload({ execCase, projectId, testPlanId, runRecord, config
   if (Array.isArray(execCase?.test_case_revision?.steps) && execCase.test_case_revision.steps.length) {
     payload.step_wise_result = execCase.test_case_revision.steps.map((step) => ({
       ...step,
-      status: runRecord.status
+      status
     }));
+  }
+
+  // TCV-7071: without it, the API copies the case status to every row
+  if (exampleUpdate) {
+    payload.testdataset_wise_result = exampleUpdate.testdatasetWiseResult;
   }
 
   return payload;
@@ -1219,8 +1244,15 @@ async function uploadUsingReporterFlow({
   const uploadCache = new Map();
   let attachmentsUploaded = 0;
   let casesWithAttachments = 0;
+  let exampleRowsUpdated = 0;
 
   const configIds = Object.keys(resultsToUpload);
+
+  // TCV-7071: read only when a synced outline reported the results of its Examples rows
+  const hasExampleResults = configIds.some((configId) =>
+    (resultsToUpload[configId] || []).some((runRecord) => runRecord && runRecord.exampleResults)
+  );
+  const statusPriority = hasExampleResults ? await tcApiInstance.getStatusPriorities() : null;
 
   for (const configId of configIds) {
     const records = Array.isArray(resultsToUpload[configId]) ? resultsToUpload[configId] : [];
@@ -1251,6 +1283,24 @@ async function uploadUsingReporterFlow({
         matched += 1;
         matchedExecCaseIds.add(execCase.id);
 
+        // TCV-7071: each Examples row of a synced outline gets its own result
+        const exampleUpdate = runRecord.exampleResults
+          ? applyExampleResults({ execCase, exampleResults: runRecord.exampleResults, statusPriority })
+          : null;
+        if (runRecord.exampleResults && !exampleUpdate) {
+          console.log(
+            `ℹ️  ${runRecord.title}: the test dataset of this run has no Examples index, so every row gets one result. ` +
+              'Run tc sync after the next change to its feature file to report each row.'
+          );
+        }
+        if (exampleUpdate && exampleUpdate.unmatchedIndexes.length) {
+          console.warn(
+            `⚠️  ${runRecord.title}: no row of the test dataset of this run has Examples index ` +
+              `${exampleUpdate.unmatchedIndexes.map((index) => `#${index}`).join(', ')}. ` +
+              'The result counts toward the test case status only. Run tc sync, then start a new run.'
+          );
+        }
+
         const updatePayload = buildUpdatePayload({
           execCase,
           projectId,
@@ -1258,7 +1308,8 @@ async function uploadUsingReporterFlow({
           runRecord,
           configId,
           hasConfig,
-          provenance
+          provenance,
+          exampleUpdate
         });
 
         const updateResult = await tcApiInstance.updateCaseRunResult(execCase.id, updatePayload);
@@ -1268,6 +1319,9 @@ async function uploadUsingReporterFlow({
         }
 
         updated += 1;
+        if (exampleUpdate) {
+          exampleRowsUpdated += exampleUpdate.rowsSet;
+        }
 
         if (runRecord.status === RUN_RESULT_MAP.fail && runRecord.errDetails) {
           await tcApiInstance.uploadCaseComments({
@@ -1371,6 +1425,7 @@ async function uploadUsingReporterFlow({
     skippedMissing,
     attachmentsUploaded,
     casesWithAttachments,
+    exampleRowsUpdated,
     unresolvedIds: unique(unresolvedIds || []),
     unmatchedCaseIds: unique([...unmatchedCaseIds]),
     unmatchedConfigIds: unique([...unmatchedConfigIds])
@@ -1420,6 +1475,9 @@ function logUploadSummary(formatLabel, summary) {
     console.log(
       `📎 ${summary.attachmentsUploaded} attachment(s) uploaded to ${summary.casesWithAttachments} test case(s)`
     );
+  }
+  if (summary.exampleRowsUpdated) {
+    console.log(`🥒 ${summary.exampleRowsUpdated} Examples row(s) got their own result`);
   }
   if (summary.unresolvedIds?.length) {
     console.warn(`⚠️  ${summary.unresolvedIds.length} testcase(s) missing TestCollab ID`);
@@ -1728,7 +1786,9 @@ async function autoCreateTestPlan({ apiKey, apiUrl, projectId, parsedReport, bui
       errDetails: test.errDetails,
       title: test.title,
       duration: test.duration,
-      attachmentPaths: test.attachmentPaths
+      attachmentPaths: test.attachmentPaths,
+      // TCV-7071: the result of each Examples row of a synced outline
+      exampleResults: test.exampleResults
     });
   }
   parsedReport.resultsToUpload = newResultsToUpload;
@@ -1875,7 +1935,9 @@ export function addBddMatchesToUpload(parsedReport) {
       errDetails: test.errDetails,
       title: test.title,
       duration: test.duration,
-      attachmentPaths: test.attachmentPaths
+      attachmentPaths: test.attachmentPaths,
+      // TCV-7071: the result of each Examples row of a synced outline
+      exampleResults: test.exampleResults
     });
   }
 

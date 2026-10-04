@@ -266,7 +266,7 @@ describe('TCV-6912: scenarios under a Rule: heading', () => {
     const { hash: topHash, ...topScenario } = topLevel.scenarios[0];
     expect(rule).toEqual({ title: 'Plain rule' });
     expect(ruleScenario).toEqual(topScenario);
-    expect(ruleScenario.examples).toEqual({ parameters: ['days', 'result'], rows: [['40', 'rejected']] });
+    expect(ruleScenario.examples).toEqual({ parameters: ['days', 'result'], rows: [['40', 'rejected']], indexes: ['1.1'], names: [''] });
     expect(ruleScenario.steps).toEqual(['Given I bought a jacket {{days}} days ago', 'Then the refund is {{result}}']);
     expect(topLevel.scenarios[0].rule).toBeUndefined();
   });

@@ -394,13 +394,21 @@ function toDatasetReferences(text, parameters) {
  * into it: the columns in the order they first appear, one row per example
  * row, and an empty value where a block has no such column. Null when there
  * is no column or no row, so a plain Scenario sends nothing.
+ *
+ * TCV-7071: each row also goes with its index as Cucumber numbers it in a
+ * report, `<table>.<row>`: the position of its block among all the Examples
+ * blocks of the outline (a block with no table takes a number too), then its
+ * row in that block. And with the name of its block. `tc report` sets the
+ * result of one row of the dataset by that index.
  */
 function extractExamples(scenario) {
   const parameters = [];
   const valuesByRow = [];
-  for (const block of scenario.examples || []) {
+  const indexes = [];
+  const names = [];
+  (scenario.examples || []).forEach((block, blockIndex) => {
     if (!block.tableHeader) {
-      continue;
+      return;
     }
     const header = block.tableHeader.cells.map(cell => cell.value);
     header.filter(Boolean).forEach(name => {
@@ -408,20 +416,24 @@ function extractExamples(scenario) {
         parameters.push(name);
       }
     });
-    for (const row of block.tableBody || []) {
+    (block.tableBody || []).forEach((row, rowIndex) => {
       const values = new Map();
       row.cells.forEach((cell, index) => {
         values.set(header[index], cell.value);
       });
       valuesByRow.push(values);
-    }
-  }
+      indexes.push(`${blockIndex + 1}.${rowIndex + 1}`);
+      names.push(block.name || '');
+    });
+  });
   if (parameters.length === 0 || valuesByRow.length === 0) {
     return null;
   }
   return {
     parameters,
-    rows: valuesByRow.map(values => parameters.map(name => (values.has(name) ? values.get(name) : '')))
+    rows: valuesByRow.map(values => parameters.map(name => (values.has(name) ? values.get(name) : ''))),
+    indexes,
+    names
   };
 }
 

@@ -345,7 +345,7 @@ tc report --project 123 --test-plan-id 456 \
   --format junit --result-file ./reports/results.xml
 ```
 
-**Feature files synced with `tc sync`?** Then your scenarios need no TestCollab ID in their name. Cucumber's JUnit output uses the feature title as `classname`; the CLI also recognizes the formatter's numbered Examples names and rolls outline rows into one result. See [BDD: results from synced `.feature` files](../README.md#bdd-results-from-synced-feature-files) for matching, ambiguity and skipped-result rules.
+**Feature files synced with `tc sync`?** Then your scenarios need no TestCollab ID in their name. Cucumber's JUnit output uses the feature title as `classname`; the CLI also recognizes the formatter's numbered Examples names and gives each outline row its own result. See [BDD: results from synced `.feature` files](../README.md#bdd-results-from-synced-feature-files) for matching, ambiguity and skipped-result rules.
 
 ---
 

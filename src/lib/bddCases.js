@@ -26,6 +26,16 @@ function escapeRegex(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+// The JS/JVM message formatter appends Examples names and #table.row,
+// followed by the expanded pickle name when the outline title is parameterized.
+const EXAMPLE_NUMBER = /^(.*?) - #(\d+)\.(\d+)(?:: .*)?$/;
+
+/** TCV-7071: the Examples index ("2.1") in a reported name, or null. */
+export function exampleIndexOf(name) {
+  const numbered = String(name || '').match(EXAMPLE_NUMBER);
+  return numbered ? `${numbered[2]}.${numbered[3]}` : null;
+}
+
 function canonicalTemplate(title) {
   return normalizeTitle(title).replace(/<([^<>]+)>/g, '{{$1}}');
 }
@@ -45,9 +55,7 @@ export function matchesScenarioTitle(testCase, reportedName) {
   if (rule) titles.push(`${normalizeTitle(rule.slice(6))} - ${title}`);
   return titles.some(candidate => {
     if (candidate === name || matchesExpandedTitle(candidate, name)) return true;
-    // The JS/JVM message formatter appends Examples names and #table.row,
-    // followed by the expanded pickle name when the outline title is parameterized.
-    const numbered = name.match(/^(.*?) - #\d+\.\d+(?:: .*)?$/);
+    const numbered = name.match(EXAMPLE_NUMBER);
     if (!numbered) return false;
     const prefix = canonicalTemplate(numbered[1]);
     const template = canonicalTemplate(candidate);
@@ -125,6 +133,8 @@ export async function matchBddSyncedCases({ baseApiUrl, apiKey, projectId, allTe
 }
 
 // A partially skipped outline is skipped; a failure always wins. Keep configs apart.
+// TCV-7071: also keep the result of each Examples row by its #table.row, when every
+// result of the case has one (`exampleResults`, null otherwise).
 const RESULT_PRIORITY = { 1: 0, 0: 1, 3: 2, 4: 3, 2: 4 };
 export function rollUpBddResults(tests) {
   const groups = new Map();
@@ -138,7 +148,7 @@ export function rollUpBddResults(tests) {
     const key = `${test.configId || '0'}:${test.tcId}`;
     let combined = groups.get(key);
     if (!combined) {
-      combined = { ...test, duration: 0, errDetails: null, attachmentPaths: [] };
+      combined = { ...test, duration: 0, errDetails: null, attachmentPaths: [], exampleResults: [] };
       groups.set(key, combined);
       result.push(combined);
     }
@@ -146,6 +156,95 @@ export function rollUpBddResults(tests) {
     combined.duration += Number(test.duration) || 0;
     if (test.errDetails) combined.errDetails = [combined.errDetails, `${test.title}: ${test.errDetails}`].filter(Boolean).join('\n\n');
     combined.attachmentPaths = [...new Set([...combined.attachmentPaths, ...(test.attachmentPaths || [])])];
+    const index = exampleIndexOf(test.title);
+    if (!index) {
+      combined.exampleResults = null;
+    } else if (combined.exampleResults) {
+      // The same row reported twice keeps the worse result
+      const same = combined.exampleResults.find(example => example.index === index);
+      if (!same) combined.exampleResults.push({ index, status: test.status });
+      else if (RESULT_PRIORITY[test.status] > RESULT_PRIORITY[same.status]) same.status = test.status;
+    }
   }
   return result;
+}
+
+// TCV-7071: the row keys tc sync stores the Examples row of a dataset row under
+const EXAMPLE_INDEX_KEY = 'bdd_example_index';
+// The status names the API reads a numeric status as, by position
+const STATUS_NAMES = ['unexecuted', 'passed', 'failed', 'skipped', 'blocked'];
+// The order of the system statuses a new project starts with, for when the project's own
+// order cannot be read
+const DEFAULT_STATUS_PRIORITY = new Map([['unexecuted', 1], ['passed', 10], ['failed', 20], ['skipped', 30], ['blocked', 40]]);
+
+function statusName(status) {
+  return STATUS_NAMES[status] || String(status);
+}
+
+// A JSON column reaches the client parsed, but an execution written by a raw SQL update
+// can still hold it as text
+function listOf(value) {
+  if (typeof value === 'string') {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      return [];
+    }
+  }
+  return Array.isArray(value) ? value : [];
+}
+
+/**
+ * TCV-7071: the results of a synced outline's Examples rows as the update of its execution.
+ *
+ * The execution holds the dataset it runs (`testdataset`) and one result per row and step
+ * (`testdataset_wise_result`, a row by its position, `dataset_row_index`). tc sync stores the
+ * Examples index of each row in the row, so a reported #2.1 finds its row however the
+ * Examples tables are split. The steps of a reported row take its status; every other row
+ * keeps its result. A reported index with no row here counts toward the case status only.
+ *
+ * The case takes the status of its rows that ranks highest in the project's status order
+ * (`statusPriority`, a Map of system name to priority), as the Run screen does. The API
+ * refuses a case status that ranks below the status of any row. In a new run the rows that
+ * were not reported are unexecuted, so this is the worst status of the reported rows.
+ *
+ * Null when the dataset of the execution has no Examples index (synced by an older CLI) or
+ * the execution holds no row results, so the caller reports the case as before.
+ */
+export function applyExampleResults({ execCase, exampleResults, statusPriority }) {
+  const results = listOf(execCase.testdataset_wise_result);
+  const resultRows = new Set(results.map(entry => `${entry.dataset_id}|${entry.dataset_row_index}`));
+  const rowOfIndex = new Map();
+  listOf(execCase.testdataset).filter(Boolean).forEach(dataset => {
+    listOf(dataset.datarows).forEach((datarow, rowIndex) => {
+      const row = `${dataset.id}|${rowIndex}`;
+      if (resultRows.has(row) && datarow && datarow[EXAMPLE_INDEX_KEY]) {
+        rowOfIndex.set(datarow[EXAMPLE_INDEX_KEY], row);
+      }
+    });
+  });
+  if (!rowOfIndex.size) {
+    return null;
+  }
+
+  const statusOfRow = new Map();
+  const unmatched = [];
+  exampleResults.forEach(example => {
+    const row = rowOfIndex.get(example.index);
+    if (row) statusOfRow.set(row, statusName(example.status));
+    else unmatched.push(example);
+  });
+  const testdatasetWiseResult = results.map(entry => {
+    const status = statusOfRow.get(`${entry.dataset_id}|${entry.dataset_row_index}`);
+    return status ? { ...entry, status } : entry;
+  });
+
+  const order = statusPriority || DEFAULT_STATUS_PRIORITY;
+  const rank = name => order.get(name) || 0;
+  const executed = testdatasetWiseResult.map(entry => statusName(entry.status))
+    .concat(unmatched.map(example => statusName(example.status)))
+    .filter(name => name !== 'unexecuted');
+  const status = executed.reduce((worst, name) => (rank(name) > rank(worst) ? name : worst));
+
+  return { status, testdatasetWiseResult, rowsSet: statusOfRow.size, unmatchedIndexes: unmatched.map(example => example.index) };
 }

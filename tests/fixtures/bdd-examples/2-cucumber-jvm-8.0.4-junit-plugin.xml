@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="Cucumber" time="0.039" tests="7" skipped="0" failures="1" errors="0" timestamp="2026-10-04T05:05:42.138786Z">
+<testcase classname="Checkout discount" name="An empty cart has no discount" time="0.001">
+<system-out><![CDATA[
+When the cart total is 0....................................................passed
+Then the discount is 0......................................................passed
+]]></system-out>
+</testcase>
+<testcase classname="Checkout discount" name="A discount by cart total - Small carts - #1.1" time="0.0">
+<system-out><![CDATA[
+When the cart total is 50...................................................passed
+Then the discount is 0......................................................passed
+]]></system-out>
+</testcase>
+<testcase classname="Checkout discount" name="A discount by cart total - Small carts - #1.2" time="0.0">
+<system-out><![CDATA[
+When the cart total is 99...................................................passed
+Then the discount is 0......................................................passed
+]]></system-out>
+</testcase>
+<testcase classname="Checkout discount" name="A discount by cart total - Large carts - #2.1" time="0.0">
+<system-out><![CDATA[
+When the cart total is 100..................................................passed
+Then the discount is 10.....................................................passed
+]]></system-out>
+</testcase>
+<testcase classname="Checkout discount" name="A discount by cart total - Large carts - #2.2" time="0.001">
+<failure type="org.opentest4j.AssertionFailedError" message="expected: &lt;40&gt; but was: &lt;50&gt;">
+<![CDATA[org.opentest4j.AssertionFailedError: expected: <40> but was: <50>
+	at org.junit.jupiter.api.Assertions.assertEquals(Assertions.java:569)
+	at demo.Steps.theDiscountIs(Steps.java:20)
+	at ✽.the discount is 40(classpath:demo/discount.feature:9)
+]]>
+</failure>
+<system-out><![CDATA[
+When the cart total is 500..................................................passed
+Then the discount is 40.....................................................failed
+]]></system-out>
+</testcase>
+<testcase classname="Checkout discount" name="Coupon &lt;code&gt; gives &lt;percent&gt; percent - #1.1: Coupon SAVE10 gives 10 percent" time="0.0">
+<system-out><![CDATA[
+When the coupon is "SAVE10".................................................passed
+Then the coupon discount is 10..............................................passed
+]]></system-out>
+</testcase>
+<testcase classname="Checkout discount" name="Coupon &lt;code&gt; gives &lt;percent&gt; percent - #1.2: Coupon SAVE20 gives 20 percent" time="0.0">
+<system-out><![CDATA[
+When the coupon is "SAVE20".................................................passed
+Then the coupon discount is 20..............................................passed
+]]></system-out>
+</testcase>
+</testsuite>
