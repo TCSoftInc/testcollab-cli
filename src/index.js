@@ -53,6 +53,8 @@ program
   // TCV-6891: off by default, which keeps the default assignee each test case
   // carries (TCV-6779) and gives --assignee-id only the cases without one.
   .option('--override-assignees', 'Assign every test case to --assignee-id, replacing the default assignees inherited from the test cases', false)
+  // TCV-7069: off by default; the plan link is printed either way.
+  .option('--public', 'Make the new test plan public and print its share link, which opens without a TestCollab account', false)
   .option('--api-url <url>', 'TestCollab API base URL', 'https://api.testcollab.io')
   .action(createTestPlan);
 
@@ -88,6 +90,8 @@ program
   .option('--auto-create', 'Auto-create missing tag, suites, test cases, folder, and test plan from result file')
   .option('--build <idOrVersion>', 'Build the results were run against, by id or version; the version is created as a build if no build records it yet (requires --auto-create)')
   .option('--environment <name>', 'Environment recorded on the build when --build creates it (e.g. Staging)')
+  // TCV-7069: off by default; the plan link is printed either way.
+  .option('--public', 'Make the auto-created test plan public and print its share link, which opens without a TestCollab account (requires --auto-create)', false)
   .action(report);
 
 // Report one execution as soon as it finishes. This is the Agent-friendly

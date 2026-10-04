@@ -13,6 +13,7 @@
  * - --release        Release ID the plan belongs to (TCV-6788)
  * - --override-assignees  Give --assignee-id every test case, replacing the
  *                    default assignees inherited from the test cases (TCV-6891)
+ * - --public         Make the plan public and print its share link (TCV-7069)
  * - --api-url        (defaults to https://api.testcollab.io)
  */
 
@@ -25,6 +26,7 @@ import {
   TestCasesApi,
   ProjectUsersApi
 } from '@testcollab/sdk';
+import { shareTestPlan, testPlanUrl } from '../lib/testPlanLinks.js';
 
 // TCV-6788: the build/release lookups and the plan create go through direct
 // requests instead of the SDK — the published SDK's TestPlanPayload does not
@@ -168,7 +170,9 @@ export async function createTestPlan(options) {
     apiUrl,
     build,
     release,
-    overrideAssignees
+    overrideAssignees,
+    // TCV-7069: `public` is a reserved word in module code, so it is renamed here.
+    public: makePublic
   } = options;
 
   // Resolve API key: --api-key flag takes precedence, then TESTCOLLAB_TOKEN env var
@@ -429,6 +433,23 @@ export async function createTestPlan(options) {
     // Persist test plan id
     fs.writeFileSync('tmp/tc_test_plan', `TESTCOLLAB_TEST_PLAN_ID=${testPlanId}`);
     console.log('✅ Test plan created and assigned successfully.');
+    // TCV-7069: print the link, so nobody has to look the plan up by its id.
+    console.log(`🔗 Test plan: ${testPlanUrl(effectiveApiUrl, parsedProjectId, testPlanId)}`);
+
+    // TCV-7069: --public shares the plan the way the app's "Get shareable link"
+    // button does. It runs last, so a refusal leaves a complete private plan; the
+    // command still fails, because the pipeline asked for a link it did not get.
+    if (makePublic === true) {
+      console.log('Making the test plan public...');
+      const publicUrl = await shareTestPlan({
+        request: (endpoint, requestOptions) =>
+          apiRequest(effectiveApiUrl, apiKey, endpoint, requestOptions),
+        apiUrl: effectiveApiUrl,
+        projectId: parsedProjectId,
+        testPlanId
+      });
+      console.log(`🌐 Public link (opens without a TestCollab account): ${publicUrl}`);
+    }
   } catch (error) {
     // console.error("ERROR:", error);
     // Improve error visibility if error is a Response-like object

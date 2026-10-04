@@ -29,6 +29,7 @@ import { decodeXmlEntities } from '../lib/xml.js';
 import { redactToken } from '../lib/redact.js';
 import { extractAttachmentPaths, resolveAttachments } from '../lib/attachments.js';
 import { matchBddSyncedCases, normalizeTitle, fetchSuiteCases, rollUpBddResults, featureTitle } from '../lib/bddCases.js';
+import { shareTestPlan, testPlanUrl } from '../lib/testPlanLinks.js';
 
 // TCV-7028: normalizeTitle moved next to the BDD matching that shares it; it stays
 // exported here because that is where the auto-create title match reads it from.
@@ -1900,7 +1901,9 @@ export async function report(options) {
     skipMissing,
     autoCreate,
     build,
-    environment
+    environment,
+    // TCV-7069: `public` is a reserved word in module code, so it is renamed here.
+    public: makePublic
   } = options;
 
   // Resolve API key: --api-key flag takes precedence, then TESTCOLLAB_TOKEN env var
@@ -1957,6 +1960,11 @@ export async function report(options) {
   }
   if (environment && build === undefined) {
     console.error('❌ Error: --environment only applies to the build named by --build');
+    process.exit(1);
+  }
+  // TCV-7069: like --build, --public applies to the plan --auto-create makes.
+  if (makePublic === true && !autoCreate) {
+    console.error('❌ Error: --public requires --auto-create');
     process.exit(1);
   }
 
@@ -2066,6 +2074,29 @@ export async function report(options) {
 
     logUploadSummary(normalizedFormat === 'junit' ? 'JUnit' : 'Mochawesome', summary);
     logBddUnmatched(parsedReport);
+
+    // TCV-7069: print the link for both modes, the new plan and the --test-plan-id one.
+    const baseApiUrl = getBaseApiUrl(apiUrl);
+    console.log(`🔗 Test plan: ${testPlanUrl(baseApiUrl, parsedProjectId, effectiveTestPlanId)}`);
+
+    // TCV-7069: shared after the upload, so a refusal cannot cost the results; the
+    // run still fails, because the pipeline asked for a link it did not get.
+    if (makePublic === true) {
+      console.log('Making the test plan public...');
+      const client = new TcApiClient({
+        accessToken: String(apiKey),
+        projectId: parsedProjectId,
+        testPlanId: effectiveTestPlanId,
+        baseApiUrl
+      });
+      const publicUrl = await shareTestPlan({
+        request: (endpoint, requestOptions) => client.request(endpoint, requestOptions),
+        apiUrl: baseApiUrl,
+        projectId: parsedProjectId,
+        testPlanId: effectiveTestPlanId
+      });
+      console.log(`🌐 Public link (opens without a TestCollab account): ${publicUrl}`);
+    }
   } catch (err) {
     // TCV-6489: The SDK throws raw Response objects on non-2xx status codes,
     // which stringify as "[object Response]". Extract the actual error details.
