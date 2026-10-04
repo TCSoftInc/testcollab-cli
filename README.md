@@ -129,6 +129,7 @@ tc createTestPlan \
   [--build <idOrVersion>] \
   [--release <id>] \
   [--override-assignees] \
+  [--public] \
   [--api-key <key>] \
   [--api-url <url>]
 ```
@@ -141,10 +142,34 @@ tc createTestPlan \
 | `--build <idOrVersion>` | No | Build the plan is executed against — a build ID or a version string (e.g. `2026.8.6-rc1`). Results are then traceable to that build. |
 | `--release <id>` | No | Release ID the plan belongs to |
 | `--override-assignees` | No | Assign **every** test case to `--assignee-id`, replacing the default assignees the test cases carry. Off by default. |
+| `--public` | No | Make the new plan **public** and print its share link, which opens without a TestCollab account. Off by default. |
 | `--api-key <key>` | No | TestCollab API key (or set `TESTCOLLAB_TOKEN` env var) |
 | `--api-url <url>` | No | API base URL (default: `https://api.testcollab.io`). Use `https://api-eu.testcollab.io` for EU region. |
 
-**Output:** Writes the created plan ID to `tmp/tc_test_plan` as `TESTCOLLAB_TEST_PLAN_ID=<id>`. You can source this file in subsequent CI steps.
+**Output:** Prints the link to the new plan, and writes the plan ID to `tmp/tc_test_plan` as `TESTCOLLAB_TEST_PLAN_ID=<id>`. You can source this file in subsequent CI steps.
+
+```
+✅ Test plan created and assigned successfully.
+🔗 Test plan: https://testcollab.io/project/45/test_plans/1234/view
+```
+
+#### Sharing the plan with people who have no account
+
+`--public` makes the new plan public, the same as **Get shareable link** in the app, and prints the share link. Anyone with the link can open the plan without signing in, so you can post it to a chat channel or a pull request.
+
+```bash
+tc createTestPlan --project 45 --ci-tag-id 12 --assignee-id 7 --public
+```
+
+```
+🔗 Test plan: https://testcollab.io/project/45/test_plans/1234/view
+Making the test plan public...
+🌐 Public link (opens without a TestCollab account): https://testcollab.io/project/45/test_plans/1234/view?public_token=...&region=US
+```
+
+- The plan is made public last, after its test cases are added and assigned.
+- If TestCollab refuses to share the plan, the command prints the reason and **exits 1**. The plan is still created, assigned and recorded in `tmp/tc_test_plan`, but it stays private.
+- The share link works in both regions. It carries `region=EU` when `--api-url` points at the EU API.
 
 #### Who the test cases are assigned to
 
@@ -313,10 +338,18 @@ tc report --project <id> --test-plan-id <id> --format <mochawesome|junit> --resu
 | `--auto-create` | * | Auto-create tag, suites, test cases, folder, and test plan from result file |
 | `--build <idOrVersion>` | No | Build the results were run against, by id or version. A version with no build yet is created as one. Requires `--auto-create`. |
 | `--environment <name>` | No | Environment recorded on the build when `--build` creates it (e.g. `Staging`) |
+| `--public` | No | Make the auto-created plan **public** and print its share link, which opens without a TestCollab account. Requires `--auto-create`. |
 
 > \* Either `--test-plan-id` or `--auto-create` is required (they are mutually exclusive).
 
-**Output:** Writes the resolved test plan id to `tmp/tc_test_plan` as `TESTCOLLAB_TEST_PLAN_ID=<id>` for both modes (the `--auto-create` plan or the `--test-plan-id` you passed). A later CI step can source it, so `tc report --auto-create` can be followed by `tc gate` without hardcoding the plan id.
+**Output:** Prints the link to the test plan at the end of the run, in both modes (the `--auto-create` plan or the `--test-plan-id` you passed):
+
+```
+✅ JUnit report processed (2 matched, 2 updated)
+🔗 Test plan: https://testcollab.io/project/123/test_plans/555/view
+```
+
+It also writes the resolved test plan id to `tmp/tc_test_plan` as `TESTCOLLAB_TEST_PLAN_ID=<id>` for both modes. A later CI step can source it, so `tc report --auto-create` can be followed by `tc gate` without hardcoding the plan id.
 
 #### `--auto-create`
 
@@ -379,6 +412,30 @@ tc report \
 - If several builds in the project share the version, the command stops and asks for an id rather than guessing which one the results belong to. An id belonging to another project also stops the run, rather than being recorded as a new version.
 - A **release is never created**. The plan picks up a release when one of the project's releases has a version pattern matching the build (for example pattern `2.14.*` and build `2.14.9`); otherwise the plan simply has no release. Releases stay a planning decision someone makes in TestCollab.
 - `--build` requires `--auto-create`. A plan passed with `--test-plan-id` keeps whatever build it was already given.
+
+#### `--public` — share the results with people who have no account
+
+Pass `--public` with `--auto-create` and the new plan is made public, the same as **Get shareable link** in the app. The command then prints the share link, which opens the plan and its results without signing in:
+
+```bash
+tc report \
+  --project 123 \
+  --format junit \
+  --result-file ./results.xml \
+  --auto-create \
+  --public
+```
+
+```
+🔗 Test plan: https://testcollab.io/project/123/test_plans/556/view
+Making the test plan public...
+🌐 Public link (opens without a TestCollab account): https://testcollab.io/project/123/test_plans/556/view?public_token=...&region=US
+```
+
+- The plan is made public after the results are uploaded, so the results are saved even if sharing fails.
+- If TestCollab refuses to share the plan, the command prints the reason and **exits 1**. The plan and its results stay, and the plan stays private.
+- `--public` requires `--auto-create`. To share an existing plan, use **Get shareable link** on the plan in the app.
+- The share link works in both regions. It carries `region=EU` when `--api-url` points at the EU API.
 
 #### `--skip-missing`
 

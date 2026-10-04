@@ -137,6 +137,7 @@ Key details:
 3. Bulk-adds test cases matching the CI tag
 4. Assigns the plan to the specified user
 5. Writes plan ID to `tmp/tc_test_plan`
+6. Prints the plan link; with `--public`, shares the plan (`POST /tokens/shareEntityToken`) and prints the share link. The app URL is derived from `--api-url` in `src/lib/testPlanLinks.js`
 
 ### `tc report` (report.js)
 
@@ -148,6 +149,7 @@ Key details:
 4. Optionally extracts configuration IDs (`config-id-<id>`, `config-<id>`)
 5. Maps results: pass → 1, fail → 2, skip → 3
 6. Uploads results to the test plan via TestCollab API
+7. Prints the plan link; with `--auto-create --public`, shares the new plan the same way as `tc createTestPlan`
 
 ## Debugging
 

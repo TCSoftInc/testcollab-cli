@@ -21,6 +21,7 @@ tc-cli report --project 123 --format junit --result-file results.xml --auto-crea
 7. Creates a **test plan** (`CI Run: DD-MM-YYYY HH:MM`) under the CI folder, linked to the build
 8. Adds all tagged test cases to the plan and assigns them to the current user
 9. Uploads the test results
+10. Prints the link to the plan, and with `--public` makes the plan public and prints its share link
 
 ## Report Command Modes
 
@@ -106,6 +107,24 @@ tc-cli report \
 
 If the version is not resolved when the pipeline runs (an unset variable, so `--build ""`), the command fails rather than quietly uploading results with no build attached.
 
+## Sharing the Plan
+
+Every run ends with the link to the plan, so nobody has to look it up in TestCollab:
+
+```
+🔗 Test plan: https://testcollab.io/project/42/test_plans/556/view
+```
+
+Add `--public` to make the new plan public, the same as **Get shareable link** in the app. The command then also prints the share link, which opens the plan and its results without a TestCollab account:
+
+```bash
+tc-cli report --project 42 --format junit --result-file results.xml --auto-create --public
+```
+
+- The plan is made public after the results are uploaded. If TestCollab refuses to share it, the command prints the reason and exits 1, and the plan keeps its results but stays private.
+- `--public` requires `--auto-create`. An existing plan passed with `--test-plan-id` is shared from the app.
+- The link points at the app that serves the API in `--api-url`, so `https://api-eu.testcollab.io` gives a share link with `region=EU`.
+
 ## Suite Name Humanization
 
 Raw suite names from test runners are cleaned up before becoming TestCollab suite titles:
@@ -176,9 +195,11 @@ Options:
   --build <idOrVersion> Build the results were run against, by id or version
                         (requires --auto-create)
   --environment <name>  Environment recorded on the build when --build creates it
+  --public              Make the new plan public and print its share link
+                        (requires --auto-create)
 ```
 
-**Note:** `--test-plan-id` and `--auto-create` are mutually exclusive, and `--build` requires `--auto-create`.
+**Note:** `--test-plan-id` and `--auto-create` are mutually exclusive, and `--build` and `--public` require `--auto-create`.
 
 ## Examples
 
