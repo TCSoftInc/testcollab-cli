@@ -16,7 +16,7 @@
 
 import fs from 'fs';
 import path from 'path';
-import { decodeXmlEntities } from './xml.js';
+import { decodeXmlText } from './xml.js';
 
 // TCV-6853: guardrails. `tc report` runs immediately before `tc gate`, so a
 // huge or numerous artefact set must not turn into a slow upload that holds up
@@ -25,7 +25,6 @@ export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 export const MAX_ATTACHMENTS_PER_CASE = 10;
 
 const SYSTEM_OUT_PATTERN = /<system-out\b[^>]*>([\s\S]*?)<\/system-out\s*>/gi;
-const CDATA_PATTERN = /<!\[CDATA\[([\s\S]*?)\]\]>/g;
 
 // The marker must occupy a whole line. That is what stops a log line or an
 // error message that merely quotes the syntax from being read as an artefact.
@@ -51,26 +50,6 @@ const MIME_TYPES = {
   '.webm': 'video/webm',
   '.mp4': 'video/mp4'
 };
-
-/**
- * Read a `<system-out>` body: CDATA sections are literal, everything outside
- * them is entity-encoded.
- */
-function decodeSystemOut(raw) {
-  let decoded = '';
-  let cursor = 0;
-  let section;
-
-  CDATA_PATTERN.lastIndex = 0;
-  while ((section = CDATA_PATTERN.exec(raw)) !== null) {
-    decoded += decodeXmlEntities(raw.slice(cursor, section.index));
-    decoded += section[1];
-    cursor = CDATA_PATTERN.lastIndex;
-  }
-  decoded += decodeXmlEntities(raw.slice(cursor));
-
-  return decoded;
-}
 
 /**
  * Split a marker payload into its file path, tolerating the optional third
@@ -106,7 +85,7 @@ export function extractAttachmentPaths(testCaseBody) {
 
   SYSTEM_OUT_PATTERN.lastIndex = 0;
   while ((systemOut = SYSTEM_OUT_PATTERN.exec(body)) !== null) {
-    const text = decodeSystemOut(systemOut[1] || '');
+    const text = decodeXmlText(systemOut[1] || '');
     let marker;
 
     MARKER_PATTERN.lastIndex = 0;

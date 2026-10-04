@@ -25,7 +25,7 @@ import {
 } from '@testcollab/sdk';
 import { resolveBuild } from '../lib/builds.js';
 import { buildExecutionProvenance } from '../utils/executionProvenance.js';
-import { decodeXmlEntities } from '../lib/xml.js';
+import { decodeXmlEntities, decodeXmlText } from '../lib/xml.js';
 import { redactToken } from '../lib/redact.js';
 import { extractAttachmentPaths, resolveAttachments } from '../lib/attachments.js';
 import { matchBddSyncedCases, normalizeTitle, fetchSuiteCases, rollUpBddResults, featureTitle } from '../lib/bddCases.js';
@@ -154,7 +154,9 @@ function getFailureDetails(body) {
     const attrs = parseXmlAttributes(expandedFailure[2] || '');
     return {
       message: attrs.message || attrs.type || '',
-      stack: decodeXmlEntities((expandedFailure[3] || '').trim())
+      // TCV-7070: Cucumber writes failure bodies as CDATA. Unwrap it without
+      // decoding literal entities inside the section.
+      stack: decodeXmlText((expandedFailure[3] || '').trim())
     };
   }
 
