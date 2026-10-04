@@ -1287,15 +1287,17 @@ async function uploadUsingReporterFlow({
         const exampleUpdate = runRecord.exampleResults
           ? applyExampleResults({ execCase, exampleResults: runRecord.exampleResults, statusPriority })
           : null;
+        // The title of the test case, not the name of the first row reported for it
+        const caseTitle = execCase.test_case_revision?.title || runRecord.title;
         if (runRecord.exampleResults && !exampleUpdate) {
           console.log(
-            `ℹ️  ${runRecord.title}: the test dataset of this run has no Examples index, so every row gets one result. ` +
+            `ℹ️  ${caseTitle}: the test dataset of this run has no Examples index, so every row gets one result. ` +
               'Run tc sync after the next change to its feature file to report each row.'
           );
         }
         if (exampleUpdate && exampleUpdate.unmatchedIndexes.length) {
           console.warn(
-            `⚠️  ${runRecord.title}: no row of the test dataset of this run has Examples index ` +
+            `⚠️  ${caseTitle}: no row of the test dataset of this run has Examples index ` +
               `${exampleUpdate.unmatchedIndexes.map((index) => `#${index}`).join(', ')}. ` +
               'The result counts toward the test case status only. Run tc sync, then start a new run.'
           );

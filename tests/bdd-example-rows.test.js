@@ -47,7 +47,7 @@ function execution(caseId, { rows, indexed = true, statusOfRow = () => 'unexecut
   return {
     id: caseId + 1000,
     test_plan_test_case: { id: caseId + 2000, test_case: caseId },
-    test_case_revision: { steps: STEPS },
+    test_case_revision: { title: cases.find(testCase => testCase.id === caseId).title, steps: STEPS },
     testdataset: rows ? [{ id: datasetId, parameters: [{ key: 1, field: 'a' }, { key: 2, field: 'b' }], datarows }] : null,
     testdataset_wise_result: results
   };
@@ -149,7 +149,8 @@ it('a dataset with no Examples index (synced by an older CLI) gets the result of
   const discount = resultWrite(32).body;
   expect([discount.status, discount.testdataset_wise_result]).toEqual([2, undefined]);
   expect(discount.step_wise_result.map(step => step.status)).toEqual([2, 2]);
-  expect(console.log).toHaveBeenCalledWith(expect.stringContaining('the test dataset of this run has no Examples index'));
+  // the message names the test case, not the first row reported for it
+  expect(console.log).toHaveBeenCalledWith(expect.stringContaining('A discount by cart total: the test dataset of this run has no Examples index'));
 });
 
 it('a row that already failed in this run keeps its result, and the case stays failed', async () => {
@@ -195,7 +196,7 @@ it('an index with no row in the dataset counts toward the case status only, with
   const discount = resultWrite(32).body;
   expect(iterations(discount)).toEqual(['unexecuted', 'unexecuted']);
   expect(discount.status).toBe('failed');
-  expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('Examples index #2.1, #2.2'));
+  expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('A discount by cart total: no row of the test dataset of this run has Examples index #2.1, #2.2'));
 });
 
 it('a report with no Examples rows reads no status order', async () => {
