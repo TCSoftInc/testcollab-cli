@@ -24,6 +24,7 @@ import {
   ProjectsApi
 } from '@testcollab/sdk';
 import { resolveBuild } from '../lib/builds.js';
+import { prepareTestPlanCustomFields, updateTestPlanCustomFields } from '../lib/testPlanCustomFields.js';
 import { buildExecutionProvenance } from '../utils/executionProvenance.js';
 import { decodeXmlEntities, decodeXmlText } from '../lib/xml.js';
 import { redactToken } from '../lib/redact.js';
@@ -1533,7 +1534,7 @@ function createSdkConfig(apiKey, apiUrl) {
  * Uses @testcollab/sdk (same pattern as createTestPlan.js), except for the test
  * plan create — see step 9.
  */
-async function autoCreateTestPlan({ apiKey, apiUrl, projectId, parsedReport, buildRef, environment }) {
+async function autoCreateTestPlan({ apiKey, apiUrl, projectId, parsedReport, buildRef, environment, customFields = [] }) {
   const config = createSdkConfig(apiKey, apiUrl);
   const effectiveApiUrl = getBaseApiUrl(apiUrl);
 
@@ -1827,7 +1828,7 @@ async function autoCreateTestPlan({ apiKey, apiUrl, projectId, parsedReport, bui
     status: 1,
     priority: 1,
     test_plan_folder: ciFolder.id,
-    custom_fields: []
+    custom_fields: customFields
   };
   if (build) {
     planPayload.build = build.id;
@@ -2061,6 +2062,14 @@ export async function report(options) {
       `ℹ️  Parsed ${formatLabel} (${stats.tests} tests: ${stats.passes} passed, ${stats.failures} failed, ${stats.skipped} skipped)`
     );
 
+    const preparedFields = await prepareTestPlanCustomFields({
+      apiUrl: getBaseApiUrl(apiUrl),
+      apiKey: String(apiKey),
+      projectId: parsedProjectId,
+      testPlanId: parsedTestPlanId,
+      inputs: options.customField
+    });
+
     // TCV-7028: results from a synced .feature file carry no TestCollab id, so what
     // ties them to a test case is the feature title and the scenario title. This runs
     // before --auto-create so a synced case is matched rather than copied.
@@ -2087,7 +2096,8 @@ export async function report(options) {
         projectId: parsedProjectId,
         parsedReport,
         buildRef: build,
-        environment
+        environment,
+        customFields: preparedFields?.customFields || []
       });
       if (!autoResult) {
         console.log('No matched cases to report; no test plan created.');
@@ -2096,6 +2106,14 @@ export async function report(options) {
       }
       effectiveTestPlanId = autoResult.testPlanId;
       resolvedBuildId = autoResult.buildId || null;
+    } else if (preparedFields) {
+      await updateTestPlanCustomFields({
+        apiUrl: getBaseApiUrl(apiUrl),
+        apiKey: String(apiKey),
+        projectId: parsedProjectId,
+        prepared: preparedFields
+      });
+      console.log('   ✓ Test-plan custom fields updated');
     }
 
     // Persist the resolved test plan id so a later CI step (e.g. `tc gate`) can

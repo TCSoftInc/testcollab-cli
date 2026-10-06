@@ -313,10 +313,39 @@ tc report --project <id> --test-plan-id <id> --format <mochawesome|junit> --resu
 | `--auto-create` | * | Auto-create tag, suites, test cases, folder, and test plan from result file |
 | `--build <idOrVersion>` | No | Build the results were run against, by id or version. A version with no build yet is created as one. Requires `--auto-create`. |
 | `--environment <name>` | No | Environment recorded on the build when `--build` creates it (e.g. `Staging`) |
+| `--custom-field <name=value>` | No | Set a **test-plan** custom field; repeat for multiple fields. Accepts the field's system name, ID, or unique label. Works in both modes. |
 
 > \* Either `--test-plan-id` or `--auto-create` is required (they are mutually exclusive).
 
 **Output:** Writes the resolved test plan id to `tmp/tc_test_plan` as `TESTCOLLAB_TEST_PLAN_ID=<id>` for both modes (the `--auto-create` plan or the `--test-plan-id` you passed). A later CI step can source it, so `tc report --auto-create` can be followed by `tc gate` without hardcoding the plan id.
+
+#### Test-plan custom fields
+
+Set existing custom fields on the plan receiving the results:
+
+```bash
+tc report --project 123 --format junit --result-file results.xml --auto-create \
+  --custom-field 'Environment=Staging' \
+  --custom-field 'Pipeline URL=https://ci.example.com/runs/456'
+
+# Update fields on an existing plan while preserving fields you did not supply
+tc report --project 123 --test-plan-id 555 --format junit --result-file results.xml \
+  --custom-field 'Environment=Staging'
+```
+
+The fields must already be configured for **Test Plans** in the project. Use a
+field's label, system name, or ID (for example, `--custom-field '42=Staging'`).
+Dropdown values accept an option label or system value. Multiple-select and
+configuration dropdown fields accept a JSON array, such as
+`--custom-field 'Browsers=["Chrome","Firefox"]'`, or a single option.
+Dates use `YYYY-MM-DD`; URL fields accept HTTP, HTTPS and FTP; user fields take a project member's user ID. An empty
+value clears an optional field (`--custom-field 'Notes='`). Quote values that
+contain spaces, shell characters, or JSON; `=` inside a value is preserved.
+
+Unknown fields, invalid values, duplicate fields and missing required fields
+fail before any resources or results are written. An existing plan retains
+unspecified custom fields. An update failure stops the upload. These values
+apply only to the test plan; they are not applied to test cases or executions.
 
 #### `--auto-create`
 

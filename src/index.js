@@ -12,6 +12,7 @@ import { featuresync } from './commands/featuresync.js';
 import { createTestPlan } from './commands/createTestPlan.js';
 import { createBuild } from './commands/createBuild.js';
 import { report } from './commands/report.js';
+import { collectCustomField } from './lib/testPlanCustomFields.js';
 import { getTestPlan } from './commands/getTestPlan.js';
 import { gate } from './commands/gate.js';
 import { collectAttachment, reportCase } from './commands/reportCase.js';
@@ -88,6 +89,7 @@ program
   .option('--auto-create', 'Auto-create missing tag, suites, test cases, folder, and test plan from result file')
   .option('--build <idOrVersion>', 'Build the results were run against, by id or version; the version is created as a build if no build records it yet (requires --auto-create)')
   .option('--environment <name>', 'Environment recorded on the build when --build creates it (e.g. Staging)')
+  .option('--custom-field <name=value>', 'Set a test-plan custom field by system name, ID, or label; repeatable', collectCustomField, [])
   .action(report);
 
 // Report one execution as soon as it finishes. This is the Agent-friendly
