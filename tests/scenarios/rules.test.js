@@ -158,7 +158,12 @@ describe('TCV-6912: scenarios under a Rule: heading', () => {
       title: 'Refunds',
       description: 'Customers can return an item for a refund.',
       background: ['Given I am logged in as a customer'],
-      backgroundText: ['Given I am logged in as a customer']
+      backgroundText: ['Given I am logged in as a customer'],
+      // TCV-7133: the acceptance criteria of the feature's requirement
+      rules: [
+        { title: 'A refund is only possible within 30 days of purchase', description: '' },
+        { title: 'The item must be unused', description: '' }
+      ]
     });
     expect(change.scenarios).toEqual([
       {

@@ -105,4 +105,21 @@ describe('TCV-7029: the sync summary', () => {
     expect(printed).toContain('♻️  Restored 1 archived test case(s) whose scenario is back');
     expect(printed).not.toContain(NO_CHANGES);
   });
+
+  // TCV-7133: each feature file keeps one requirement, linked to the test cases of its scenarios
+  test('created and updated requirements and new requirement links are printed, and count as changes', async () => {
+    const printed = await syncAndPrint({ createdSuites: 0, createdCases: 0, createdRequirements: 1, updatedRequirements: 2, requirementLinks: 3 });
+
+    expect(printed).toContain('✨ Created 1 requirement(s)');
+    expect(printed).toContain('🔄 Updated 2 requirement(s)');
+    expect(printed).toContain('🔗 Linked 3 test case(s) to the requirement of their feature');
+    expect(printed).not.toContain(NO_CHANGES);
+  });
+
+  test('new requirement links alone are a change too', async () => {
+    const printed = await syncAndPrint({ createdSuites: 0, createdCases: 0, requirementLinks: 1 });
+
+    expect(printed).toContain('🔗 Linked 1 test case(s) to the requirement of their feature');
+    expect(printed).not.toContain(NO_CHANGES);
+  });
 });

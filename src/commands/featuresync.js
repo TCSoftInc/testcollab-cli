@@ -277,7 +277,9 @@ async function processChange(git, change, lastSyncedCommit) {
           title: newParsed.feature.name,
           description: newParsed.feature.FeatureDescription,
           background: newParsed.feature.background,
-          backgroundText: newParsed.feature.backgroundText
+          backgroundText: newParsed.feature.backgroundText,
+          // TCV-7133: the acceptance criteria of the feature's requirement
+          rules: newParsed.feature.rules
         };
         processed.scenarios = newParsed.scenarios;
       }
@@ -469,6 +471,8 @@ function parseGherkinFile(content, filePath) {
     let background = null;
     // TCV-6912: scenarios written under a Rule: heading
     const ruleScenarios = [];
+    // TCV-7133: every Rule: block, also one with no scenario yet
+    const rules = [];
     // TCV-7053: Cucumber applies Feature tags to every scenario in the file.
     const featureTags = tagNames(feature.tags);
 
@@ -492,6 +496,7 @@ function parseGherkinFile(content, filePath) {
         background = child.background;
       } else if (child.rule) {
         ruleScenarios.push(...parseRule(child.rule, content, filePath, featureTags));
+        rules.push(toSyncRule(child.rule));
       }
     }
     
@@ -517,7 +522,9 @@ function parseGherkinFile(content, filePath) {
       FeatureDescription: featureDescription || '',
       // TCV-7031: a background table reaches every case of the feature
       background: background ? background.steps.map(step => formatStep(step)) : undefined,
-      backgroundText: backgroundText && backgroundText.length > 0 ? backgroundText : undefined
+      backgroundText: backgroundText && backgroundText.length > 0 ? backgroundText : undefined,
+      // TCV-7133: not sent for a file without rules, so its payload stays as it was
+      rules: rules.length > 0 ? rules : undefined
       },
       featureHash: calculateHash(featureContent, filePath),
       scenarios: scenarios.concat(ruleScenarios)
@@ -603,6 +610,20 @@ function parseRule(rule, content, filePath, featureTags) {
       rule: syncRule
     };
   });
+}
+
+/**
+ * TCV-7133: a Rule: block as an acceptance criterion of the feature's requirement: the rule
+ * title and the text written under it. Gherkin keeps that text with its indentation, so each
+ * line is trimmed and the blank ones are left out.
+ */
+function toSyncRule(rule) {
+  const description = (rule.description || '')
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean)
+    .join('\n');
+  return { title: rule.name, description };
 }
 
 // TCV-6912: the line a rule or scenario starts on, counting the tags written above it
@@ -998,7 +1019,17 @@ function displaySyncResults(result) {
   if (counts.restoredCases > 0) {
     console.log(`♻️  Restored ${counts.restoredCases} archived test case(s) whose scenario is back`);
   }
-  
+  // TCV-7133: each feature file keeps one requirement, linked to the test cases of its scenarios
+  if (counts.createdRequirements > 0) {
+    console.log(`✨ Created ${counts.createdRequirements} requirement(s)`);
+  }
+  if (counts.updatedRequirements > 0) {
+    console.log(`🔄 Updated ${counts.updatedRequirements} requirement(s)`);
+  }
+  if (counts.requirementLinks > 0) {
+    console.log(`🔗 Linked ${counts.requirementLinks} test case(s) to the requirement of their feature`);
+  }
+
   if (counts.warnings && counts.warnings.length > 0) {
     console.log('\n⚠️  Warnings:');
     counts.warnings.forEach(warning => console.log(`   ${warning}`));
@@ -1008,8 +1039,9 @@ function displaySyncResults(result) {
   const totalChanges = (counts.createdSuites || 0) + (counts.createdCases || 0) + 
                       (counts.renamedSuites || 0) + (counts.renamedCases || 0) + 
                       (counts.updatedCases || 0) + (counts.deletedSuites || 0) + 
-                      (counts.deletedCases || 0) + (counts.archivedCases || 0) + 
-                      (counts.restoredCases || 0);
+                      (counts.deletedCases || 0) + (counts.archivedCases || 0) +
+                      (counts.restoredCases || 0) + (counts.createdRequirements || 0) +
+                      (counts.updatedRequirements || 0) + (counts.requirementLinks || 0);
   
   if (totalChanges === 0) {
     console.log('ℹ️  No changes were required - everything is already in sync');
